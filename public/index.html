@@ -23,16 +23,10 @@
     }
     #top {
       width: 100%;
-      padding: 6px 10px;
-      font-size: 15px;
+      padding: 6px 10px 4px;
+      font-size: 14px;
       font-weight: bold;
       text-align: center;
-    }
-    #top .small {
-      font-size: 13px;
-      font-weight: normal;
-      display: block;
-      margin-top: 2px;
     }
     #inviteBtn {
       margin-left: 6px;
@@ -43,31 +37,125 @@
       font-size: 13px;
       padding: 4px 10px;
     }
+
+    /* Верхняя панель: показатели и кнопки справа */
+    #hud {
+      display: flex;
+      gap: 6px;
+      width: 100%;
+      max-width: 520px;
+      padding: 0 8px;
+    }
+    #stats, #partnerInfo {
+      background: #fff8f0;
+      border: 2px solid #6b2d45;
+      border-radius: 10px;
+      font-size: 12px;
+    }
+    #stats { flex: 1.6; padding: 5px 7px; }
+    #side { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+    #lookBtn {
+      border: 2px solid #6b2d45;
+      border-radius: 10px;
+      background: #ff8fb1;
+      color: white;
+      font-size: 13px;
+      font-weight: bold;
+      padding: 8px 4px;
+    }
+    #lookBtn:active { background: #e0668f; }
+    #partnerInfo {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 4px;
+    }
+    .who {
+      font-weight: bold;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .line {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      margin: 2px 0 3px;
+      font-size: 12px;
+    }
+    .bar {
+      flex: 1;
+      height: 9px;
+      background: #f3d3de;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .bar i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: #ff8fb1;
+      transition: width 0.4s;
+    }
+    .bar.low i { background: #e0504f; }
+
+    /* Игровая область */
     #gameWrap {
+      position: relative;
       flex: 1;
       width: 100%;
       min-height: 0;
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 6px 0;
     }
     canvas {
       image-rendering: pixelated;
       background: #fff8f0;
       border: 3px solid #6b2d45;
       border-radius: 6px;
-      max-width: 100%;
-      max-height: 100%;
     }
+    #toast {
+      position: absolute;
+      left: 50%;
+      top: 12px;
+      transform: translateX(-50%);
+      background: rgba(107, 45, 69, 0.92);
+      color: white;
+      font-size: 14px;
+      padding: 8px 14px;
+      border-radius: 14px;
+      max-width: 90%;
+      text-align: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s;
+    }
+    #toast.show { opacity: 1; }
+
+    /* Управление */
     #controls {
       display: flex;
-      justify-content: center;
-      padding: 10px 0 18px;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      max-width: 520px;
+      padding: 4px 14px 16px;
     }
     #pad {
       display: grid;
-      grid-template-columns: repeat(3, 68px);
-      grid-template-rows: repeat(2, 68px);
+      grid-template-columns: repeat(3, 58px);
+      grid-template-rows: repeat(2, 58px);
+      gap: 6px;
+    }
+    #actions {
+      display: grid;
+      grid-template-columns: repeat(2, 66px);
+      grid-template-rows: repeat(2, 66px);
       gap: 6px;
     }
     .btn {
@@ -75,7 +163,7 @@
       border-radius: 16px;
       background: #ff8fb1;
       color: white;
-      font-size: 30px;
+      font-size: 28px;
       font-weight: bold;
       user-select: none;
       -webkit-user-select: none;
@@ -85,6 +173,19 @@
     #left { grid-column: 1; grid-row: 2; }
     #down { grid-column: 2; grid-row: 2; }
     #right { grid-column: 3; grid-row: 2; }
+    .act {
+      background: #ff6f91;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      line-height: 1.1;
+      padding: 2px;
+    }
+    .act span { font-size: 24px; }
+    .act small { font-size: 11px; font-weight: bold; }
+    #actBtn { grid-column: 1; grid-row: 1; }
+    #emoBtn { grid-column: 2; grid-row: 2; }
 
     /* Стартовый экран */
     #lobby {
@@ -152,19 +253,50 @@
   <div id="app">
     <div id="top">
       ❤️ TamoLove — <span id="room">Гостиная</span>
-      <span class="small">
-        Код дома: <b id="houseCode">-----</b>
-        <button id="inviteBtn">Пригласить</button>
-      </span>
-      <span class="small" id="partnerInfo"></span>
+      · Код: <b id="houseCode">-----</b>
+      <button id="inviteBtn">Пригласить</button>
     </div>
-    <div id="gameWrap"><canvas id="game"></canvas></div>
+
+    <div id="hud">
+      <div id="stats">
+        <div class="who" id="meName">Я</div>
+        <div class="line">
+          <span>🍖</span><div class="bar" id="meSat"><i></i></div>
+          <span>⚡</span><div class="bar" id="meEne"><i></i></div>
+          <span>😊</span><div class="bar" id="meMood"><i></i></div>
+        </div>
+        <div class="who" id="paName">Партнёр</div>
+        <div class="line">
+          <span>🍖</span><div class="bar" id="paSat"><i></i></div>
+          <span>⚡</span><div class="bar" id="paEne"><i></i></div>
+          <span>😊</span><div class="bar" id="paMood"><i></i></div>
+        </div>
+        <div class="line">
+          <span>🧹</span><div class="bar" id="houseClean"><i></i></div>
+          <span>🥣</span><div class="bar" id="houseBowl"><i></i></div>
+        </div>
+      </div>
+      <div id="side">
+        <button id="lookBtn">Смена внешки</button>
+        <div id="partnerInfo">Ждём второго игрока</div>
+      </div>
+    </div>
+
+    <div id="gameWrap">
+      <canvas id="game"></canvas>
+      <div id="toast"></div>
+    </div>
+
     <div id="controls">
       <div id="pad">
         <button class="btn" id="up">▲</button>
         <button class="btn" id="left">◀</button>
         <button class="btn" id="down">▼</button>
         <button class="btn" id="right">▶</button>
+      </div>
+      <div id="actions">
+        <button class="btn act" id="actBtn"><span id="actIcon">✋</span><small id="actLabel">Действие</small></button>
+        <button class="btn act" id="emoBtn"><span>❤️</span><small>Сердечко</small></button>
       </div>
     </div>
   </div>
