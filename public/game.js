@@ -8,6 +8,10 @@ const lobby = document.getElementById("lobby");
 const lobbyError = document.getElementById("lobbyError");
 const nameInput = document.getElementById("nameInput");
 const codeInput = document.getElementById("codeInput");
+const toastEl = document.getElementById("toast");
+const actBtn = document.getElementById("actBtn");
+const actIcon = document.getElementById("actIcon");
+const actLabel = document.getElementById("actLabel");
 
 const T = 16;
 const COLS = 20;
@@ -41,6 +45,7 @@ const roomNames = {
   bottomLeft: "Спальня",
   bottomRight: "Зона уборки"
 };
+const roleNames = { caregiver: "Ведущий", receiver: "Ведомый" };
 const floorColors = {
   topLeft: ["#f6e7c1", "#efdcae"],
   topRight: ["#f9d9e3", "#f3cbd8"],
@@ -91,6 +96,26 @@ const furniture = [
   { x: 16, y: 12, w: 2, h: 1, color: "#f0f0f0", edge: "#a8a8a8", solid: true }
 ];
 
+// Места для действий (те же, что на сервере)
+const ZONES = {
+  stove: [{ x: 5, y: 1, w: 1, h: 1 }],
+  bowl: [{ x: 7, y: 5, w: 1, h: 1 }],
+  bed: [{ x: 1, y: 9, w: 3, h: 2 }],
+  clean: [{ x: 17, y: 10, w: 1, h: 1 }, { x: 16, y: 12, w: 2, h: 1 }]
+};
+const REACH = 1.3;
+
+function near(p, zoneName) {
+  return ZONES[zoneName].some((z) => {
+    const dx = Math.max(z.x - p.x, 0, p.x - (z.x + z.w));
+    const dy = Math.max(z.y - p.y, 0, p.y - (z.y + z.h));
+    return Math.hypot(dx, dy) <= REACH;
+  });
+}
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 // ---------- Персонажи ----------
 const looks = {
   caregiver: { skin: "#f5c9a0", hair: "#5a3825", shirt: "#ff6f91", pants: "#4a5a8a" },
@@ -103,7 +128,8 @@ const player = {
   y: 3.5,
   speed: 3.6,
   facing: "down",
-  name: ""
+  name: "",
+  carrying: false
 };
 // Это второй игрок
 const partner = {
@@ -114,13 +140,15 @@ const partner = {
   tx: 0,
   ty: 0,
   facing: "down",
-  name: ""
+  name: "",
+  carrying: false
 };
 const HALF = 0.3;
 
 let myRole = null;
 let partnerRole = null;
 let gotOwnPosition = false;
+let emoteUntil = 0;
 
 function blockedAt(px, py) {
   const corners = [
@@ -144,6 +172,23 @@ function blockedAt(px, py) {
     }
   }
   return false;
+}
+
+// ---------- Подсказки и всплывающий текст ----------
+let toastTimer = null;
+function showToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2200);
+}
+
+function setBar(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const v = Math.max(0, Math.min(100, value || 0));
+  el.firstElementChild.style.width = v + "%";
+  el.classList.toggle("low", v < 30);
 }
 
 // ---------- Управление ----------
@@ -172,12 +217,72 @@ const keyMap = {
 };
 window.addEventListener("keydown", (e) => {
   if (e.target && e.target.tagName === "INPUT") return;
+  if (e.key === "e" || e.key === "E" || e.key === " ") {
+    if (!e.repeat) doAct();
+    e.preventDefault();
+    return;
+  }
   if (keyMap[e.key]) { keys[keyMap[e.key]] = true; e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => {
   if (e.target && e.target.tagName === "INPUT") return;
   if (keyMap[e.key]) { keys[keyMap[e.key]] = false; e.preventDefault(); }
 });
+
+// Кнопка действия: если держать, действие повторяется
+let actTimer = null;
+function doAct() {
+  if (!session) return;
+  sendMsg({ type: "act" });
+}
+function startAct(e) {
+  e.preventDefault();
+  doAct();
+  clearInterval(actTimer);
+  actTimer = setInterval(doAct, 600);
+}
+function stopAct(e) {
+  if (e) e.preventDefault();
+  clearInterval(actTimer);
+  actTimer = null;
+}
+actBtn.addEventListener("pointerdown", startAct);
+actBtn.addEventListener("pointerup", stopAct);
+actBtn.addEventListener("pointerleave", stopAct);
+actBtn.addEventListener("pointercancel", stopAct);
+actBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+
+document.getElementById("emoBtn").addEventListener("click", () => {
+  emoteUntil = performance.now() + 1500;
+});
+document.getElementById("lookBtn").addEventListener("click", () => {
+  showToast("Смена внешности появится на следующем этапе 🎨");
+});
+
+function actionInfo() {
+  if (!myRole || !session) return ["✋", "Действие"];
+  const p = player;
+  if (myRole === "caregiver") {
+    if (near(p, "stove")) return p.carrying ? ["🍲", "Уже несёшь"] : ["🍳", "Готовить"];
+    if (near(p, "bowl")) return p.carrying ? ["🥣", "В миску"] : ["🍳", "Нужна еда"];
+    if (p.carrying && partner.present && dist(p, partner) < 1.8) return ["🥄", "Покормить"];
+  } else if (near(p, "bowl")) {
+    return ["😋", "Есть"];
+  }
+  if (near(p, "bed")) return ["💤", "Отдых"];
+  if (near(p, "clean")) return ["🧹", "Убрать"];
+  return ["✋", "Действие"];
+}
+
+let lastActText = "";
+function updateActionButton() {
+  const info = actionInfo();
+  const key = info[0] + info[1];
+  if (key === lastActText) return;
+  lastActText = key;
+  actIcon.textContent = info[0];
+  actLabel.textContent = info[1];
+}
 
 // ---------- Связь с сервером ----------
 let ws = null;
@@ -235,6 +340,7 @@ function handleMessage(msg) {
     session = { code: msg.code };
     myRole = msg.role;
     partnerRole = msg.role === "caregiver" ? "receiver" : "caregiver";
+    gotOwnPosition = false;
     store("tamolove_code", msg.code);
     houseCodeEl.textContent = msg.code;
     lobby.classList.add("hidden");
@@ -251,17 +357,29 @@ function handleMessage(msg) {
     return;
   }
 
+  if (msg.type === "toast") {
+    showToast(msg.text);
+    return;
+  }
+
   if (msg.type === "state") {
     const mine = msg.players[myRole];
     if (mine) {
       player.name = mine.name;
+      player.carrying = mine.carrying;
       if (!gotOwnPosition) {
         player.x = mine.x;
         player.y = mine.y;
         player.facing = mine.facing;
         gotOwnPosition = true;
       }
+      document.getElementById("meName").textContent =
+        mine.name + " (" + roleNames[myRole] + ")" + (mine.carrying ? " 🍲" : "");
+      setBar("meSat", mine.satiety);
+      setBar("meEne", mine.energy);
+      setBar("meMood", mine.mood);
     }
+
     const other = msg.players[partnerRole];
     if (other) {
       if (!partner.present) {
@@ -274,14 +392,25 @@ function handleMessage(msg) {
       partner.ty = other.y;
       partner.facing = other.facing;
       partner.name = other.name;
-      if (other.online) {
-        partnerInfo.textContent = "Рядом: " + other.name;
-      } else {
-        partnerInfo.textContent = other.name + " сейчас не в сети";
-      }
+      partner.carrying = other.carrying;
+      document.getElementById("paName").textContent =
+        other.name + " (" + roleNames[partnerRole] + ")" + (other.carrying ? " 🍲" : "");
+      setBar("paSat", other.satiety);
+      setBar("paEne", other.energy);
+      setBar("paMood", other.mood);
+      partnerInfo.textContent = other.online ? other.name + " в сети ❤️" : other.name + " спит 💤";
     } else {
       partner.present = false;
-      partnerInfo.textContent = "Ждём второго игрока. Нажми «Пригласить»";
+      document.getElementById("paName").textContent = "Ждём второго игрока";
+      setBar("paSat", 0);
+      setBar("paEne", 0);
+      setBar("paMood", 0);
+      partnerInfo.textContent = "Нажми «Пригласить»";
+    }
+
+    if (msg.house) {
+      setBar("houseClean", msg.house.clean);
+      setBar("houseBowl", msg.house.bowl);
     }
   }
 }
@@ -408,6 +537,8 @@ function update(dt, now) {
   if (roomLabel.textContent !== roomNames[key]) {
     roomLabel.textContent = roomNames[key];
   }
+
+  updateActionButton();
 }
 
 // ---------- Рисование ----------
@@ -447,10 +578,22 @@ function drawFurniture() {
   }
 }
 
-function drawCharacter(c, look, name, faded) {
+// Миска показывает, сколько в ней еды
+let bowlLevel = 0;
+function drawBowlFood() {
+  const f = furniture[4];
+  if (bowlLevel <= 0) return;
+  const px = f.x * T + 4;
+  const py = f.y * T + 4;
+  const h = Math.max(2, Math.round((bowlLevel / 100) * 8));
+  ctx.fillStyle = "#e8803a";
+  ctx.fillRect(px, py + (8 - h), 8, h);
+}
+
+function drawCharacter(c, look, name, sleeping) {
   const px = Math.round(c.x * T - 5);
   const py = Math.round(c.y * T - 10);
-  ctx.globalAlpha = faded ? 0.5 : 1;
+  ctx.globalAlpha = sleeping ? 0.55 : 1;
   // тень
   ctx.fillStyle = "rgba(0,0,0,0.15)";
   ctx.fillRect(px, py + 15, 10, 3);
@@ -474,10 +617,13 @@ function drawCharacter(c, look, name, faded) {
     ctx.fillRect(px + 8, py + 3, 2, 3);
     ctx.fillRect(px + 2, py + 3, 3, 1);
   }
-  // глаза
+  // глаза (во сне закрыты)
   if (c.facing !== "up") {
     ctx.fillStyle = "#222";
-    if (c.facing === "left") {
+    if (sleeping) {
+      ctx.fillRect(px + 2, py + 6, 2, 1);
+      ctx.fillRect(px + 6, py + 6, 2, 1);
+    } else if (c.facing === "left") {
       ctx.fillRect(px + 2, py + 5, 2, 2);
     } else if (c.facing === "right") {
       ctx.fillRect(px + 6, py + 5, 2, 2);
@@ -485,6 +631,13 @@ function drawCharacter(c, look, name, faded) {
       ctx.fillRect(px + 2, py + 5, 2, 2);
       ctx.fillRect(px + 6, py + 5, 2, 2);
     }
+  }
+  // еда в руках
+  if (c.carrying) {
+    ctx.fillStyle = "#8b5e34";
+    ctx.fillRect(px + 7, py + 8, 6, 5);
+    ctx.fillStyle = "#e8803a";
+    ctx.fillRect(px + 8, py + 8, 4, 2);
   }
   // имя
   if (name) {
@@ -496,38 +649,59 @@ function drawCharacter(c, look, name, faded) {
     ctx.fillStyle = "#6b2d45";
     ctx.fillText(name, px + 5, py - 2);
   }
+  // сон
+  if (sleeping) {
+    ctx.font = "bold 7px sans-serif";
+    ctx.fillStyle = "#4a5a8a";
+    ctx.fillText("Zzz", px + 12, py - 6);
+  }
   ctx.globalAlpha = 1;
 }
 
-function draw() {
+function drawHeart(c) {
+  const px = Math.round(c.x * T);
+  const py = Math.round(c.y * T - 24);
+  ctx.fillStyle = "#e0306a";
+  ctx.fillRect(px - 4, py, 3, 2);
+  ctx.fillRect(px + 1, py, 3, 2);
+  ctx.fillRect(px - 5, py + 1, 10, 2);
+  ctx.fillRect(px - 4, py + 3, 8, 1);
+  ctx.fillRect(px - 2, py + 4, 4, 1);
+  ctx.fillRect(px - 1, py + 5, 2, 1);
+}
+
+function draw(now) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawFloor();
   drawWalls();
   drawFurniture();
+  drawBowlFood();
 
   const list = [];
   if (myRole) {
-    list.push({ c: player, look: looks[myRole], name: player.name, faded: false });
+    list.push({ c: player, look: looks[myRole], name: player.name, sleeping: false });
   }
   if (partner.present && partnerRole) {
-    list.push({ c: partner, look: looks[partnerRole], name: partner.name, faded: !partner.online });
+    list.push({ c: partner, look: looks[partnerRole], name: partner.name, sleeping: !partner.online });
   }
   list.sort((a, b) => a.c.y - b.c.y);
   for (const item of list) {
-    drawCharacter(item.c, item.look, item.name, item.faded);
+    drawCharacter(item.c, item.look, item.name, item.sleeping);
   }
+  if (myRole && now < emoteUntil) drawHeart(player);
 }
 
 // ---------- Размер экрана ----------
 function fitCanvas() {
   const wrap = document.getElementById("gameWrap");
-  const sx = Math.floor((wrap.clientWidth - 8) / canvas.width);
-  const sy = Math.floor((wrap.clientHeight - 8) / canvas.height);
-  const scale = Math.max(1, Math.min(sx, sy));
-  canvas.style.width = canvas.width * scale + "px";
-  canvas.style.height = canvas.height * scale + "px";
+  const w = wrap.clientWidth - 12;
+  const h = wrap.clientHeight - 16;
+  const scale = Math.max(0.5, Math.min(w / canvas.width, h / canvas.height));
+  canvas.style.width = Math.floor(canvas.width * scale) + "px";
+  canvas.style.height = Math.floor(canvas.height * scale) + "px";
 }
 window.addEventListener("resize", fitCanvas);
+setTimeout(fitCanvas, 50);
 fitCanvas();
 
 // ---------- Главный цикл ----------
@@ -536,7 +710,13 @@ function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt, now);
-  draw();
+  draw(now);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
+// уровень еды в миске берём из сообщений сервера
+const bowlBar = document.getElementById("houseBowl");
+setInterval(() => {
+  bowlLevel = parseFloat(bowlBar.firstElementChild.style.width) || 0;
+}, 300);
