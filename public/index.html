@@ -13,18 +13,35 @@
       font-family: sans-serif;
       color: #6b2d45;
       overflow: hidden;
-      touch-action: none;
     }
     #app {
       display: flex;
       flex-direction: column;
       height: 100%;
       align-items: center;
+      touch-action: none;
     }
     #top {
-      padding: 8px 12px;
-      font-size: 16px;
+      width: 100%;
+      padding: 6px 10px;
+      font-size: 15px;
       font-weight: bold;
+      text-align: center;
+    }
+    #top .small {
+      font-size: 13px;
+      font-weight: normal;
+      display: block;
+      margin-top: 2px;
+    }
+    #inviteBtn {
+      margin-left: 6px;
+      border: none;
+      border-radius: 10px;
+      background: #ff8fb1;
+      color: white;
+      font-size: 13px;
+      padding: 4px 10px;
     }
     #gameWrap {
       flex: 1;
@@ -68,11 +85,79 @@
     #left { grid-column: 1; grid-row: 2; }
     #down { grid-column: 2; grid-row: 2; }
     #right { grid-column: 3; grid-row: 2; }
+
+    /* Стартовый экран */
+    #lobby {
+      position: fixed;
+      inset: 0;
+      background: #ffe4ec;
+      overflow-y: auto;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 24px 16px;
+      z-index: 10;
+    }
+    #lobby.hidden { display: none; }
+    .card {
+      width: 100%;
+      max-width: 380px;
+      background: #fff8f0;
+      border: 3px solid #6b2d45;
+      border-radius: 14px;
+      padding: 18px;
+      text-align: center;
+    }
+    .card h1 { margin: 0 0 6px; font-size: 32px; }
+    .card h2 { margin: 18px 0 8px; font-size: 17px; }
+    .card p { margin: 0 0 10px; font-size: 14px; }
+    .field {
+      width: 100%;
+      font-size: 18px;
+      padding: 12px;
+      border: 2px solid #e0a0b8;
+      border-radius: 12px;
+      background: white;
+      color: #6b2d45;
+      text-align: center;
+    }
+    .row { display: flex; gap: 8px; }
+    .role {
+      flex: 1;
+      border: 2px solid #e0a0b8;
+      border-radius: 12px;
+      background: white;
+      color: #6b2d45;
+      font-size: 15px;
+      padding: 10px 6px;
+    }
+    .role.sel { background: #ff8fb1; color: white; border-color: #e0668f; }
+    .big {
+      width: 100%;
+      margin-top: 10px;
+      border: none;
+      border-radius: 14px;
+      background: #ff6f91;
+      color: white;
+      font-size: 19px;
+      font-weight: bold;
+      padding: 14px;
+    }
+    .big:active { background: #e0668f; }
+    #lobbyError { color: #c0264f; font-size: 15px; min-height: 20px; margin-top: 10px; }
+    hr { border: none; border-top: 2px dashed #e0a0b8; margin: 18px 0 4px; }
   </style>
 </head>
 <body>
   <div id="app">
-    <div id="top">❤️ TamoLove — <span id="room">Гостиная</span></div>
+    <div id="top">
+      ❤️ TamoLove — <span id="room">Гостиная</span>
+      <span class="small">
+        Код дома: <b id="houseCode">-----</b>
+        <button id="inviteBtn">Пригласить</button>
+      </span>
+      <span class="small" id="partnerInfo"></span>
+    </div>
     <div id="gameWrap"><canvas id="game"></canvas></div>
     <div id="controls">
       <div id="pad">
@@ -83,6 +168,33 @@
       </div>
     </div>
   </div>
+
+  <div id="lobby">
+    <div class="card">
+      <h1>❤️ TamoLove</h1>
+      <p>Уютный дом для двоих</p>
+
+      <h2>Как тебя зовут?</h2>
+      <input class="field" id="nameInput" maxlength="12" placeholder="Твоё имя" autocomplete="off">
+
+      <h2>Создать новый дом</h2>
+      <p>Выбери свою роль:</p>
+      <div class="row">
+        <button class="role sel" id="roleCaregiver">Ведущий</button>
+        <button class="role" id="roleReceiver">Ведомый</button>
+      </div>
+      <button class="big" id="createBtn">Создать дом</button>
+
+      <hr>
+      <h2>Войти в дом по коду</h2>
+      <p>Вторая роль достанется тебе автоматически.</p>
+      <input class="field" id="codeInput" maxlength="5" placeholder="КОД" autocapitalize="characters" autocomplete="off">
+      <button class="big" id="joinBtn">Войти</button>
+
+      <div id="lobbyError"></div>
+    </div>
+  </div>
+
   <script src="game.js"></script>
 </body>
 </html>
