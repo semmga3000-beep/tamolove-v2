@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>TamoLove</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #ffe4ec;
+      font-family: sans-serif;
+      color: #6b2d45;
+      text-align: center;
+    }
+    h1 { font-size: 40px; margin: 0 0 12px; }
+    p { font-size: 20px; margin: 0; padding: 0 16px; }
+  </style>
+</head>
+<body>
+  <h1>❤️ TamoLove</h1>
+  <p id="status">Подключаемся к дому...</p>
+
+  <script>
+    const status = document.getElementById("status");
+    const proto = location.protocol === "https:" ? "wss://" : "ws://";
+    const ws = new WebSocket(proto + location.host);
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      status.textContent = data.text;
+    };
+    ws.onerror = () => {
+      status.textContent = "Не удалось подключиться";
+    };
+  </script>
+</body>
+</html>
