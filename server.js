@@ -44,6 +44,54 @@ const SPAWN = {
 };
 const DEFAULT_NAMES = { caregiver: "Ведущий", receiver: "Ведомый" };
 
+// ---------- Правила игры (можно менять числа) ----------
+const TICK_SECONDS = 5;       // как часто сервер пересчитывает показатели
+const OFFLINE_FACTOR = 0.2;   // во сне (не в сети) всё падает в 5 раз медленнее
+const RATE = {                // падение в секунду, когда игрок в сети
+  satiety: 0.12,
+  energy: 0.08,
+  clean: 0.05
+};
+const REACH = 1.3;            // как близко надо подойти к предмету
+
+// Места, где можно что-то делать (в клетках)
+const ZONES = {
+  stove: [{ x: 5, y: 1, w: 1, h: 1 }],
+  bowl: [{ x: 7, y: 5, w: 1, h: 1 }],
+  bed: [{ x: 1, y: 9, w: 3, h: 2 }],
+  clean: [{ x: 17, y: 10, w: 1, h: 1 }, { x: 16, y: 12, w: 2, h: 1 }]
+};
+
+function clamp(v) {
+  return Math.max(0, Math.min(100, v));
+}
+
+function near(p, zoneName) {
+  return ZONES[zoneName].some((z) => {
+    const dx = Math.max(z.x - p.x, 0, p.x - (z.x + z.w));
+    const dy = Math.max(z.y - p.y, 0, p.y - (z.y + z.h));
+    return Math.hypot(dx, dy) <= REACH;
+  });
+}
+
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function ensureHouse(house) {
+  if (typeof house.clean !== "number") house.clean = 80;
+  if (typeof house.bowl !== "number") house.bowl = 0;
+  for (const role of ROLES) {
+    const p = house.players[role];
+    if (!p) continue;
+    if (typeof p.satiety !== "number") p.satiety = 80;
+    if (typeof p.energy !== "number") p.energy = 80;
+    if (typeof p.mood !== "number") p.mood = 80;
+    p.carrying = !!p.carrying;
+  }
+}
+for (const code of Object.keys(houses)) ensureHouse(houses[code]);
+
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code;
@@ -67,7 +115,11 @@ function makePlayer(id, role, name) {
     name: cleanName(name, role),
     x: SPAWN[role].x,
     y: SPAWN[role].y,
-    facing: "down"
+    facing: "down",
+    satiety: 80,
+    energy: 80,
+    mood: 80,
+    carrying: false
   };
 }
 
@@ -82,11 +134,20 @@ function publicState(code) {
         x: p.x,
         y: p.y,
         facing: p.facing,
-        online: !!(live[code] && live[code][role])
+        online: !!(live[code] && live[code][role]),
+        satiety: Math.round(p.satiety),
+        energy: Math.round(p.energy),
+        mood: Math.round(p.mood),
+        carrying: p.carrying
       };
     }
   }
-  return { type: "state", code, players };
+  return {
+    type: "state",
+    code,
+    players,
+    house: { clean: Math.round(house.clean), bowl: Math.round(house.bowl) }
+  };
 }
 
 function broadcast(code) {
@@ -116,6 +177,82 @@ function attach(ws, code, role) {
   broadcast(code);
 }
 
+// ---------- Действия ----------
+function doAction(house, role) {
+  const p = house.players[role];
+  const other = house.players[role === "caregiver" ? "receiver" : "caregiver"];
+
+  if (role === "caregiver") {
+    if (near(p, "stove")) {
+      if (p.carrying) return "Ты уже несёшь еду. Отнеси её в миску";
+      p.carrying = true;
+      return "Еда готова! 🍲 Неси её к миске или покорми любимого";
+    }
+    if (near(p, "bowl")) {
+      if (!p.carrying) return "Сначала приготовь еду на плите";
+      house.bowl = clamp(house.bowl + 50);
+      p.carrying = false;
+      return "Миска наполнена 🥣";
+    }
+    if (p.carrying && other && dist(p, other) < 1.8) {
+      other.satiety = clamp(other.satiety + 30);
+      other.mood = clamp(other.mood + 5);
+      p.mood = clamp(p.mood + 3);
+      p.carrying = false;
+      return "Накормлено! ❤️";
+    }
+  }
+
+  if (role === "receiver" && near(p, "bowl")) {
+    if (house.bowl < 25) return "В миске пусто. Попроси приготовить еду";
+    house.bowl = clamp(house.bowl - 25);
+    p.satiety = clamp(p.satiety + 25);
+    p.mood = clamp(p.mood + 3);
+    return "Ням-ням! 😋";
+  }
+
+  if (near(p, "bed")) {
+    p.energy = clamp(p.energy + 12);
+    p.mood = clamp(p.mood + 1);
+    return "Отдых 💤";
+  }
+
+  if (near(p, "clean")) {
+    house.clean = clamp(house.clean + (role === "caregiver" ? 8 : 4));
+    p.mood = clamp(p.mood + 1);
+    return "Стало чище ✨";
+  }
+
+  return "Здесь пока нечего делать";
+}
+
+// ---------- Время идёт ----------
+setInterval(() => {
+  for (const code of Object.keys(houses)) {
+    const house = houses[code];
+    let onlineCount = 0;
+    for (const role of ROLES) {
+      const p = house.players[role];
+      if (!p) continue;
+      const online = !!(live[code] && live[code][role]);
+      if (online) onlineCount++;
+      const f = (online ? 1 : OFFLINE_FACTOR) * TICK_SECONDS;
+      p.satiety = clamp(p.satiety - RATE.satiety * f);
+      p.energy = clamp(p.energy - RATE.energy * f);
+
+      const low = p.satiety < 30 || p.energy < 30 || house.clean < 30;
+      const good = p.satiety > 50 && p.energy > 50 && house.clean > 50;
+      if (low) p.mood = clamp(p.mood - 0.06 * f);
+      else if (good) p.mood = clamp(p.mood + 0.03 * f);
+      else p.mood = clamp(p.mood - 0.01 * f);
+    }
+    const hf = (onlineCount > 0 ? 1 : OFFLINE_FACTOR) * TICK_SECONDS;
+    house.clean = clamp(house.clean - RATE.clean * hf);
+    saveSoon();
+    broadcast(code);
+  }
+}, TICK_SECONDS * 1000);
+
 // ---------- Связь с телефонами ----------
 wss.on("connection", (ws) => {
   ws.on("message", (raw) => {
@@ -130,7 +267,7 @@ wss.on("connection", (ws) => {
       const playerId = String(msg.playerId || "");
       if (!playerId || !ROLES.includes(msg.role)) return;
       const code = makeCode();
-      houses[code] = { code, players: {} };
+      houses[code] = { code, players: {}, clean: 80, bowl: 0 };
       houses[code].players[msg.role] = makePlayer(playerId, msg.role, msg.name);
       saveSoon();
       attach(ws, code, msg.role);
@@ -146,7 +283,6 @@ wss.on("connection", (ws) => {
         send(ws, { type: "error", text: "Дом с таким кодом не найден" });
         return;
       }
-      // уже был в этом доме: возвращаем на своё место
       for (const role of ROLES) {
         const p = house.players[role];
         if (p && p.id === playerId) {
@@ -154,7 +290,6 @@ wss.on("connection", (ws) => {
           return;
         }
       }
-      // иначе занимаем свободную роль
       const free = ROLES.find((r) => !house.players[r]);
       if (!free) {
         send(ws, { type: "error", text: "В этом доме уже двое" });
@@ -180,6 +315,21 @@ wss.on("connection", (ws) => {
       }
       saveSoon();
       broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "act") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const house = houses[code];
+      if (!house.players[ws.role]) return;
+      const now = Date.now();
+      if (now - (ws.lastAct || 0) < 500) return;
+      ws.lastAct = now;
+      const text = doAction(house, ws.role);
+      send(ws, { type: "toast", text });
+      saveSoon();
+      broadcast(code);
       return;
     }
     // сообщения "ping" просто держат связь живой
