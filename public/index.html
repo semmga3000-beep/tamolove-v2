@@ -2,9 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>TamoLove</title>
   <style>
+    :root {
+      --f1: #b9824f;
+      --f2: #8a5a34;
+      --f3: #4d2f1a;
+    }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body {
       margin: 0;
@@ -28,7 +33,7 @@
       font-weight: bold;
       text-align: center;
     }
-    #inviteBtn {
+    #inviteBtn, #themeBtn {
       margin-left: 6px;
       border: none;
       border-radius: 10px;
@@ -37,6 +42,7 @@
       font-size: 13px;
       padding: 4px 10px;
     }
+    #themeBtn { background: #b79bd1; }
 
     /* Верхняя панель: показатели и кнопки справа */
     #hud {
@@ -102,7 +108,7 @@
     }
     .bar.low i { background: #e0504f; }
 
-    /* Игровая область */
+    /* Игровая область в рамке */
     #gameWrap {
       position: relative;
       flex: 1;
@@ -113,11 +119,43 @@
       justify-content: center;
       padding: 6px 0;
     }
+    #frame {
+      position: relative;
+      padding: 9px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--f1), var(--f2));
+      box-shadow:
+        0 0 0 2px var(--f3),
+        0 5px 0 2px var(--f3),
+        0 10px 18px rgba(80, 30, 50, 0.25),
+        inset 0 2px 0 rgba(255, 255, 255, 0.35);
+    }
+    #frame::before, #frame::after {
+      content: "❤";
+      position: absolute;
+      font-size: 16px;
+      line-height: 1;
+      color: #ff5c8a;
+      text-shadow: 0 0 0 #fff, 0 1px 0 rgba(0, 0, 0, 0.3);
+      pointer-events: none;
+    }
+    #frame::before { top: -9px; left: -7px; }
+    #frame::after { bottom: -9px; right: -7px; }
+    #frame .corner {
+      position: absolute;
+      font-size: 14px;
+      line-height: 1;
+      color: #ffd98a;
+      pointer-events: none;
+    }
+    #frame .c1 { top: -8px; right: -6px; }
+    #frame .c2 { bottom: -8px; left: -6px; }
     canvas {
+      display: block;
       image-rendering: pixelated;
       background: #fff8f0;
-      border: 3px solid #6b2d45;
-      border-radius: 6px;
+      border-radius: 8px;
+      box-shadow: 0 0 0 3px var(--f3), 0 0 14px rgba(0, 0, 0, 0.25) inset;
     }
     #toast {
       position: absolute;
@@ -145,6 +183,7 @@
       width: 100%;
       max-width: 520px;
       padding: 4px 14px 16px;
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
     }
     #pad {
       display: grid;
@@ -255,6 +294,7 @@
       ❤️ TamoLove — <span id="room">Гостиная</span>
       · Код: <b id="houseCode">-----</b>
       <button id="inviteBtn">Пригласить</button>
+      <button id="themeBtn">🏠 Стиль</button>
     </div>
 
     <div id="hud">
@@ -283,7 +323,11 @@
     </div>
 
     <div id="gameWrap">
-      <canvas id="game"></canvas>
+      <div id="frame">
+        <canvas id="game"></canvas>
+        <span class="corner c1">✦</span>
+        <span class="corner c2">✦</span>
+      </div>
       <div id="toast"></div>
     </div>
 
@@ -327,6 +371,8 @@
     </div>
   </div>
 
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="telegram.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
