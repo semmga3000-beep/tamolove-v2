@@ -289,7 +289,7 @@ DEC.shelf = (x, y, w) => {
   if (W > 24) r(x + 22, y + 5, 4, 4, "#8fd0e8");
 };
 
-// ---- Мебель (размеры w и h приходят в клетках) ----
+// ---- Мебель ----
 const SPR = {};
 
 SPR.counter = (x, y, wc) => {
@@ -865,4 +865,263 @@ setInterval(() => sendMsg({ type: "ping" }), 25000);
 
 // ---------- Стартовый экран ----------
 const roleCaregiver = document.getElementById("roleCaregiver");
-const roleReceiver = document.getElementById("roleRece
+const roleReceiver = document.getElementById("roleReceiver");
+function selectRole(role) {
+  selectedRole = role;
+  roleCaregiver.classList.toggle("sel", role === "caregiver");
+  roleReceiver.classList.toggle("sel", role === "receiver");
+}
+roleCaregiver.addEventListener("click", () => selectRole("caregiver"));
+roleReceiver.addEventListener("click", () => selectRole("receiver"));
+
+function rememberName() {
+  store("tamolove_name", nameInput.value.trim());
+}
+
+document.getElementById("createBtn").addEventListener("click", () => {
+  rememberName();
+  showError("Создаём дом...");
+  pendingAction = {
+    type: "create",
+    playerId: playerId,
+    role: selectedRole,
+    name: nameInput.value
+  };
+  session = null;
+  sendMsg(pendingAction);
+});
+
+document.getElementById("joinBtn").addEventListener("click", () => {
+  const code = codeInput.value.trim().toUpperCase();
+  if (code.length < 5) {
+    showError("Введи код из 5 символов");
+    return;
+  }
+  rememberName();
+  showError("Входим...");
+  pendingAction = {
+    type: "join",
+    code: code,
+    playerId: playerId,
+    name: nameInput.value
+  };
+  session = null;
+  sendMsg(pendingAction);
+});
+
+inviteBtn.addEventListener("click", async () => {
+  if (!session) return;
+  const link = location.origin + "/?code=" + session.code;
+  const text = "Заходи в наш дом в TamoLove! Код: " + session.code + "\n" + link;
+  try {
+    if (navigator.share) {
+      await navigator.share({ text: text });
+      return;
+    }
+  } catch (e) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    alert("Приглашение скопировано. Отправь его второму игроку.");
+  } catch (e) {
+    prompt("Скопируй и отправь второму игроку:", text);
+  }
+});
+
+// ---------- Обновление ----------
+let lastSent = 0;
+let dirty = false;
+let lastFacing = "down";
+
+function update(dt, now) {
+  let dx = 0;
+  let dy = 0;
+  if (keys.left) dx -= 1;
+  if (keys.right) dx += 1;
+  if (keys.up) dy -= 1;
+  if (keys.down) dy += 1;
+
+  if (dx !== 0 || dy !== 0) {
+    if (dy < 0) player.facing = "up";
+    else if (dy > 0) player.facing = "down";
+    else if (dx < 0) player.facing = "left";
+    else player.facing = "right";
+
+    const len = Math.hypot(dx, dy);
+    const step = player.speed * dt;
+    const nx = player.x + (dx / len) * step;
+    const ny = player.y + (dy / len) * step;
+    let moved = false;
+    if (!blockedAt(nx, player.y)) { player.x = nx; moved = true; }
+    if (!blockedAt(player.x, ny)) { player.y = ny; moved = true; }
+    if (moved || player.facing !== lastFacing) dirty = true;
+    lastFacing = player.facing;
+  }
+
+  // отправляем свои шаги не чаще ~16 раз в секунду
+  if (dirty && gotOwnPosition && session && now - lastSent > 60) {
+    sendMsg({
+      type: "move",
+      x: player.x,
+      y: player.y,
+      facing: player.facing
+    });
+    lastSent = now;
+    dirty = false;
+  }
+
+  // плавно подтягиваем второго игрока к его позиции
+  if (partner.present) {
+    const k = Math.min(1, dt * 12);
+    partner.x += (partner.tx - partner.x) * k;
+    partner.y += (partner.ty - partner.y) * k;
+  }
+
+  const rc = tileAt(Math.floor(player.x), Math.floor(player.y));
+  const rn = LAYOUT.rooms[rc];
+  if (rn && roomLabel.textContent !== rn) {
+    roomLabel.textContent = rn;
+  }
+
+  updateActionButton();
+}
+
+// ---------- Рисование героев ----------
+function drawCharacter(c, look, sleeping) {
+  const px = Math.round(c.x * T - 5);
+  const py = Math.round(c.y * T - 10);
+  ctx.globalAlpha = sleeping ? 0.55 : 1;
+  // тень
+  r(px, py + 15, 10, 3, "rgba(0,0,0,0.18)");
+  // ноги
+  r(px + 2, py + 12, 2, 4, look.pants);
+  r(px + 6, py + 12, 2, 4, look.pants);
+  // тело
+  r(px + 1, py + 7, 8, 6, look.shirt);
+  // голова
+  r(px + 1, py + 1, 8, 7, look.skin);
+  // волосы и чёлка
+  r(px, py, 10, 3, look.hair);
+  if (c.facing === "up") {
+    r(px, py, 10, 7, look.hair);
+  } else {
+    r(px, py + 3, 2, 3, look.hair);
+    r(px + 8, py + 3, 2, 3, look.hair);
+    r(px + 2, py + 3, 3, 1, look.hair);
+  }
+  // глаза (во сне закрыты)
+  if (c.facing !== "up") {
+    if (sleeping) {
+      r(px + 2, py + 6, 2, 1, "#222");
+      r(px + 6, py + 6, 2, 1, "#222");
+    } else if (c.facing === "left") {
+      r(px + 2, py + 5, 2, 2, "#222");
+    } else if (c.facing === "right") {
+      r(px + 6, py + 5, 2, 2, "#222");
+    } else {
+      r(px + 2, py + 5, 2, 2, "#222");
+      r(px + 6, py + 5, 2, 2, "#222");
+    }
+  }
+  // еда в руках
+  if (c.carrying) {
+    r(px + 7, py + 8, 6, 5, "#8b5e34");
+    r(px + 8, py + 8, 4, 2, "#e8803a");
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawName(c, name, sleeping) {
+  const px = Math.round(c.x * T - 5);
+  const py = Math.round(c.y * T - 10);
+  ctx.textAlign = "center";
+  if (name) {
+    ctx.font = "bold 7px sans-serif";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.strokeText(name, px + 5, py - 2);
+    ctx.fillStyle = "#6b2d45";
+    ctx.fillText(name, px + 5, py - 2);
+  }
+  if (sleeping) {
+    ctx.font = "bold 7px sans-serif";
+    ctx.fillStyle = "#4a5a8a";
+    ctx.fillText("Zzz", px + 12, py - 6);
+  }
+}
+
+function drawHeart(c) {
+  const px = Math.round(c.x * T);
+  const py = Math.round(c.y * T - 24);
+  r(px - 4, py, 3, 2, "#e0306a");
+  r(px + 1, py, 3, 2, "#e0306a");
+  r(px - 5, py + 1, 10, 2, "#e0306a");
+  r(px - 4, py + 3, 8, 1, "#e0306a");
+  r(px - 2, py + 4, 4, 1, "#e0306a");
+  r(px - 1, py + 5, 2, 1, "#e0306a");
+}
+
+function draw(now) {
+  curNow = now;
+  g = ctx;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bg, 0, 0);
+
+  // всё, что стоит в доме, рисуем по порядку: что дальше от нас, то раньше
+  const list = [];
+  for (const it of LAYOUT.items) {
+    list.push({ sort: (it.y + it.h) * T, item: it });
+  }
+  if (myRole) {
+    list.push({ sort: player.y * T + 6, me: true });
+  }
+  if (partner.present && partnerRole) {
+    list.push({ sort: partner.y * T + 6, other: true });
+  }
+  list.sort((a, b) => a.sort - b.sort);
+
+  for (const e of list) {
+    if (e.item) {
+      const it = e.item;
+      const x = it.x * T;
+      const y = it.y * T;
+      if (it.solid) {
+        r(x + 1, y + it.h * T - 2, it.w * T - 2, 4, "rgba(0,0,0,0.14)");
+      }
+      SPR[it.t](x, y, it.w, it.h, it);
+    } else if (e.me) {
+      drawCharacter(player, looks[myRole], false);
+    } else if (e.other) {
+      drawCharacter(partner, looks[partnerRole], !partner.online);
+    }
+  }
+
+  if (myRole) drawName(player, player.name, false);
+  if (partner.present && partnerRole) drawName(partner, partner.name, !partner.online);
+  if (myRole && now < emoteUntil) drawHeart(player);
+}
+
+// ---------- Размер экрана ----------
+function fitCanvas() {
+  const wrap = document.getElementById("gameWrap");
+  const w = wrap.clientWidth - 12;
+  const h = wrap.clientHeight - 16;
+  const scale = Math.max(0.5, Math.min(w / canvas.width, h / canvas.height));
+  canvas.style.width = Math.floor(canvas.width * scale) + "px";
+  canvas.style.height = Math.floor(canvas.height * scale) + "px";
+}
+window.addEventListener("resize", fitCanvas);
+setTimeout(fitCanvas, 50);
+fitCanvas();
+
+// ---------- Главный цикл ----------
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt, now);
+  draw(now);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
