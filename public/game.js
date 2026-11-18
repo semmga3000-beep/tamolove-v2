@@ -162,12 +162,79 @@ function dist(a, b) {
 // =====================================================================
 //  РИСОВАНИЕ: пол, стены, мебель (всё рисуется кодом)
 // =====================================================================
+// ---------- Стили квартиры: замена цветов ----------
+const THEMES = {
+  cabin: {
+    name: "Тёмное дерево",
+    frame: ["#b9824f", "#8a5a34", "#4d2f1a"],
+    map: {}
+  },
+  pastel: {
+    name: "Пастель",
+    frame: ["#f4b6cb", "#d98aa8", "#8c4a68"],
+    map: {
+      "#c98d55": "#f1dfbf", "#a96f3c": "#dcc59c", "#d89c63": "#f8ebd2",
+      "#d8ab7a": "#f3e3cc", "#bd8b5c": "#e0c9a8", "#e5bd8f": "#faf0e0",
+      "#a97240": "#e6cfa6", "#8a572b": "#cfb487", "#bb834f": "#f1ddb9",
+      "#ecdcb8": "#f6ecd9", "#e2cfa5": "#eadfc6", "#cdb98f": "#d8c9a8",
+      "#d6e8f0": "#e4f1f6", "#cbe0ea": "#d8eaf2", "#a9c5d3": "#bcd6e2",
+      "#f1e0b2": "#dbeaf6", "#e6d19c": "#c6dbee",
+      "#ebd2a8": "#e6e0f6", "#dfc194": "#d3cbee",
+      "#f0cfcf": "#f8dfe8", "#e4bcbc": "#efc9d8",
+      "#cde3ec": "#d6eee6", "#b9d4e0": "#c0e0d6",
+      "#5b3720": "#8fa8cc", "#86542f": "#b6c9e4", "#7b4a2b": "#e8c9a0", "#9a6338": "#f4dcb8",
+      "#6b4226": "#c9a67a", "#8a5a34": "#dfc298", "#4d2f1a": "#a68355", "#58341f": "#b58f63",
+      "#3f6b3f": "#e88fae", "#4f8a4f": "#f4b3c8", "#5b9a58": "#f8c8d8",
+      "#e0bf8a": "#ffe9b8", "#a23f3f": "#f7c8d8", "#b04a48": "#fbd9e4",
+      "#a8703f": "#7fb0d6", "#8a5a30": "#5f93bd", "#7c4f2a": "#4f82ab",
+      "#e6c690": "#f4f1ec", "#f5deb0": "#ffffff", "#f3dcae": "#f2a65a",
+      "#2f5490": "#a98ac6", "#3d6bb0": "#c0a3d8", "#5b88cc": "#d6c0e8",
+      "#2a4a80": "#8b6aab", "#34609f": "#b393d0",
+      "#e0839c": "#8cc3e8", "#f0a9bb": "#b4daf3", "#cf7189": "#6fa9d2",
+      "#9a6a35": "#e8d3b0", "#c18a4a": "#f3e4c8",
+      "#5b80c0": "#f09ab4", "#7da0d8": "#f7bccf",
+      "#b57a45": "#b58fd6", "#a36b38": "#f0e0d0", "#c28850": "#fff3e6",
+      "#b9803f": "#f3e4c8", "#d8a060": "#fff3e0", "#d0975e": "#fff3e0",
+      "#5f8fa8": "#f2a0bb", "#82b0c6": "#f8bfd1", "#476e82": "#d4809e",
+      "#7fbf7f": "#f6b6cb", "#6aa86a": "#e898b2"
+    }
+  },
+  anime: {
+    name: "Светлый дом",
+    frame: ["#f2d29a", "#d9a96c", "#8a5a2a"],
+    map: {
+      "#c98d55": "#ecc590", "#a96f3c": "#d9a96c", "#d89c63": "#f4d6a8",
+      "#d8ab7a": "#f1cfc0", "#bd8b5c": "#e0b8a6", "#e5bd8f": "#f8e0d4",
+      "#a97240": "#dcae78", "#8a572b": "#c28f58", "#bb834f": "#e8c08c",
+      "#ecdcb8": "#f5efe2", "#e2cfa5": "#eae1cf", "#cdb98f": "#d8cdb6",
+      "#d6e8f0": "#f6e4ea", "#cbe0ea": "#efd6df", "#a9c5d3": "#dcbfca",
+      "#f1e0b2": "#fbf0cf", "#e6d19c": "#f0e0b4",
+      "#ebd2a8": "#fbefd0", "#dfc194": "#f0deb4",
+      "#f0cfcf": "#f9e1e6", "#e4bcbc": "#efc8d2",
+      "#cde3ec": "#d7edf2", "#b9d4e0": "#bfdce5",
+      "#5b3720": "#b9824f", "#86542f": "#d49d68", "#7b4a2b": "#c38a58", "#9a6338": "#dcab78",
+      "#6b4226": "#c88a55", "#8a5a34": "#dda26b", "#4d2f1a": "#a96e3f", "#58341f": "#b8793f",
+      "#3f6b3f": "#f0e4d0", "#4f8a4f": "#fffaf0", "#5b9a58": "#fff6e6",
+      "#e0bf8a": "#ffe3b0", "#a23f3f": "#f2b8b0", "#b04a48": "#f7c9c2",
+      "#cdb0df": "#f4c6d4", "#a98ac6": "#f8dce6", "#b79bd1": "#fbe8ef",
+      "#2f5490": "#e8e4de", "#3d6bb0": "#faf8f4", "#5b88cc": "#ffffff",
+      "#2a4a80": "#cfc9c0", "#34609f": "#f0ece6",
+      "#5f8fa8": "#8fcfb8", "#82b0c6": "#b5e4d2", "#476e82": "#6fb39b",
+      "#5b80c0": "#fdf6ee", "#7da0d8": "#f4d6d0",
+      "#7fbf7f": "#fff3e6", "#6aa86a": "#f0dcc4",
+      "#a8703f": "#d9a26a", "#e6c690": "#f6dcae"
+    }
+  }
+};
+const THEME_ORDER = ["cabin", "pastel", "anime"];
+let theme = THEMES.cabin;
+
 let g = ctx;       // куда сейчас рисуем (экран или фон)
 let curNow = 0;    // время для анимации
 let bowlLevel = 0; // сколько еды в миске
 
 function r(x, y, w, h, c) {
-  g.fillStyle = c;
+  g.fillStyle = (theme.map && theme.map[c]) || c;
   g.fillRect(x, y, w, h);
 }
 
@@ -190,7 +257,7 @@ function drawFloorTile(tx, ty, c) {
     let dark = "#a96f3c";
     let light = "#d89c63";
     if (c === "b") { base = "#d8ab7a"; dark = "#bd8b5c"; light = "#e5bd8f"; }
-    if (c === "d") { base = "#a8703f"; dark = "#8a572b"; light = "#bb834f"; }
+    if (c === "d") { base = "#a97240"; dark = "#8a572b"; light = "#bb834f"; }
     r(x, y, T, T, base);
     r(x, y, T, 1, dark);
     r(x, y + 8, T, 1, dark);
@@ -234,8 +301,8 @@ function drawWallTile(tx, ty) {
     r(x, y, T, T, "#6b4226");
     r(x, y, T, 2, "#8a5a34");
     r(x, y + T - 2, T, 2, "#4d2f1a");
-    r(x + 3 + (ty % 2) * 6, y + 6, 6, 1, "#5b3720");
-    r(x + 6 - (ty % 2) * 4, y + 10, 5, 1, "#5b3720");
+    r(x + 3 + (ty % 2) * 6, y + 6, 6, 1, "#58341f");
+    r(x + 6 - (ty % 2) * 4, y + 10, 5, 1, "#58341f");
   }
 }
 
@@ -551,7 +618,27 @@ function buildBackground() {
   for (const d of LAYOUT.decor) DEC[d.t](d.x * T, d.y * T, d.w);
   g = ctx;
 }
-buildBackground();
+
+function setTheme(id, announce) {
+  if (!THEMES[id]) id = "cabin";
+  theme = THEMES[id];
+  store("tamolove_theme", id);
+  buildBackground();
+  const st = document.documentElement.style;
+  st.setProperty("--f1", theme.frame[0]);
+  st.setProperty("--f2", theme.frame[1]);
+  st.setProperty("--f3", theme.frame[2]);
+  if (announce) showToast("Стиль дома: " + theme.name + " 🏠");
+}
+setTheme(load("tamolove_theme") || "cabin", false);
+
+const themeBtn = document.getElementById("themeBtn");
+if (themeBtn) {
+  themeBtn.addEventListener("click", () => {
+    const cur = THEME_ORDER.indexOf(load("tamolove_theme") || "cabin");
+    setTheme(THEME_ORDER[(cur + 1) % THEME_ORDER.length], true);
+  });
+}
 
 // ---------- Персонажи ----------
 const looks = {
@@ -1105,8 +1192,8 @@ function draw(now) {
 // ---------- Размер экрана ----------
 function fitCanvas() {
   const wrap = document.getElementById("gameWrap");
-  const w = wrap.clientWidth - 12;
-  const h = wrap.clientHeight - 16;
+  const w = wrap.clientWidth - 36;
+  const h = wrap.clientHeight - 40;
   const scale = Math.max(0.5, Math.min(w / canvas.width, h / canvas.height));
   canvas.style.width = Math.floor(canvas.width * scale) + "px";
   canvas.style.height = Math.floor(canvas.height * scale) + "px";
@@ -1125,3 +1212,4 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
+
