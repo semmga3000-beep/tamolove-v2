@@ -2,6 +2,7 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
+const { Pool } = require("pg");
 const { WebSocketServer } = require("ws");
 
 const app = express();
@@ -14,28 +15,127 @@ const wss = new WebSocketServer({ server });
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "houses.json");
 let houses = {};
-try {
-  houses = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-} catch (e) {
-  houses = {};
+let pool = null;
+let storageInfo = "файл (база не подключена, данные могут пропасть)";
+
+// Достаём чистую ссылку, даже если скопировалось лишнее (psql '...' и т.п.)
+function cleanDbUrl(raw) {
+  const m = String(raw).match(/postgres(?:ql)?:\/\/[^\s'"]+/);
+  let url = m ? m[0] : String(raw).trim();
+  try {
+    const u = new URL(url);
+    u.searchParams.delete("channel_binding");
+    url = u.toString();
+  } catch (e) {}
+  return url;
 }
 
-let saveTimer = null;
-function saveSoon() {
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
+async function initStorage() {
+  if (process.env.DATABASE_URL) {
     try {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-      fs.writeFileSync(DATA_FILE, JSON.stringify(houses));
+      pool = new Pool({
+        connectionString: cleanDbUrl(process.env.DATABASE_URL),
+        ssl: { rejectUnauthorized: false },
+        max: 3,
+        idleTimeoutMillis: 10000,
+        connectionTimeoutMillis: 10000
+      });
+      pool.on("error", (e) => console.log("Ошибка соединения с базой:", e.message));
+      await pool.query(
+        "CREATE TABLE IF NOT EXISTS houses (" +
+          "code TEXT PRIMARY KEY, " +
+          "data JSONB NOT NULL, " +
+          "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+      );
+      const res = await pool.query("SELECT code, data FROM houses");
+      for (const row of res.rows) houses[row.code] = row.data;
+      storageInfo = "база данных подключена, домов загружено: " + res.rows.length;
+      console.log("Хранилище:", storageInfo);
+      return;
     } catch (e) {
-      console.log("Не удалось сохранить:", e.message);
+      console.log("Не удалось подключиться к базе:", e.message);
+      storageInfo = "ОШИБКА базы: " + String(e.message).slice(0, 200) + " (работаем без неё)";
+      pool = null;
     }
-  }, 2000);
+  }
+  try {
+    houses = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  } catch (e) {
+    houses = {};
+  }
 }
+
+async function saveHouse(code) {
+  const house = houses[code];
+  if (!house) return;
+  if (pool) {
+    await pool.query(
+      "INSERT INTO houses (code, data, updated_at) VALUES ($1, $2::jsonb, now()) " +
+        "ON CONFLICT (code) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+      [code, JSON.stringify(house)]
+    );
+  } else {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(houses));
+  }
+}
+
+// Сохраняем не каждую секунду, а пачками (так база успевает отдыхать)
+const dirty = new Set();
+let flushTimer = null;
+let flushAt = 0;
+
+function markDirty(code, urgent) {
+  dirty.add(code);
+  const delay = urgent ? 1500 : 20000;
+  const at = Date.now() + delay;
+  if (flushTimer && flushAt <= at) return;
+  clearTimeout(flushTimer);
+  flushAt = at;
+  flushTimer = setTimeout(flush, delay);
+}
+
+async function flush() {
+  flushTimer = null;
+  const codes = Array.from(dirty);
+  dirty.clear();
+  for (const code of codes) {
+    try {
+      await saveHouse(code);
+    } catch (e) {
+      console.log("Не удалось сохранить дом " + code + ":", e.message);
+      markDirty(code, false);
+    }
+  }
+}
+
+process.on("SIGTERM", async () => {
+  for (const code of Object.keys(live)) {
+    if (anyLive(code)) dirty.add(code);
+  }
+  try {
+    await flush();
+  } catch (e) {}
+  process.exit(0);
+});
+
+app.get("/status", (req, res) => {
+  res
+    .type("text/plain; charset=utf-8")
+    .send(
+      "TamoLove работает.\nХранилище: " +
+        storageInfo +
+        "\nДомов: " +
+        Object.keys(houses).length
+    );
+});
 
 // Кто сейчас подключён (хранится только в памяти)
 const live = {};
+
+function anyLive(code) {
+  return !!(live[code] && (live[code].caregiver || live[code].receiver));
+}
 
 const ROLES = ["caregiver", "receiver"];
 const SPAWN = {
@@ -47,6 +147,7 @@ const DEFAULT_NAMES = { caregiver: "Ведущий", receiver: "Ведомый" 
 // ---------- Правила игры (можно менять числа) ----------
 const TICK_SECONDS = 5;       // как часто сервер пересчитывает показатели
 const OFFLINE_FACTOR = 0.2;   // во сне (не в сети) всё падает в 5 раз медленнее
+const FLOOR = 25;             // за долгое отсутствие показатели не упадут ниже
 const RATE = {                // падение в секунду, когда игрок в сети
   satiety: 0.12,
   energy: 0.08,
@@ -81,6 +182,7 @@ function dist(a, b) {
 function ensureHouse(house) {
   if (typeof house.clean !== "number") house.clean = 80;
   if (typeof house.bowl !== "number") house.bowl = 0;
+  if (typeof house.lastSeen !== "number") house.lastSeen = Date.now();
   for (const role of ROLES) {
     const p = house.players[role];
     if (!p) continue;
@@ -90,7 +192,27 @@ function ensureHouse(house) {
     p.carrying = !!p.carrying;
   }
 }
-for (const code of Object.keys(houses)) ensureHouse(houses[code]);
+
+// Пока в доме никого не было, все «спали»: считаем медленное падение
+function slowDecay(value, amount) {
+  return Math.max(value - amount, Math.min(value, FLOOR));
+}
+
+function catchUp(house) {
+  const now = Date.now();
+  const seconds = Math.min(2 * 86400, Math.max(0, (now - (house.lastSeen || now)) / 1000));
+  house.lastSeen = now;
+  if (seconds < 30) return;
+  const f = OFFLINE_FACTOR * seconds;
+  for (const role of ROLES) {
+    const p = house.players[role];
+    if (!p) continue;
+    p.satiety = slowDecay(p.satiety, RATE.satiety * f);
+    p.energy = slowDecay(p.energy, RATE.energy * f);
+    p.mood = slowDecay(p.mood, 0.01 * f);
+  }
+  house.clean = slowDecay(house.clean, RATE.clean * f);
+}
 
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -164,6 +286,7 @@ function send(ws, obj) {
 }
 
 function attach(ws, code, role) {
+  if (!anyLive(code)) catchUp(houses[code]);
   if (!live[code]) live[code] = {};
   const old = live[code][role];
   if (old && old !== ws) {
@@ -228,13 +351,14 @@ function doAction(house, role) {
 
 // ---------- Время идёт ----------
 setInterval(() => {
-  for (const code of Object.keys(houses)) {
+  for (const code of Object.keys(live)) {
     const house = houses[code];
+    if (!house || !anyLive(code)) continue;
     let onlineCount = 0;
     for (const role of ROLES) {
       const p = house.players[role];
       if (!p) continue;
-      const online = !!(live[code] && live[code][role]);
+      const online = !!live[code][role];
       if (online) onlineCount++;
       const f = (online ? 1 : OFFLINE_FACTOR) * TICK_SECONDS;
       p.satiety = clamp(p.satiety - RATE.satiety * f);
@@ -246,9 +370,9 @@ setInterval(() => {
       else if (good) p.mood = clamp(p.mood + 0.03 * f);
       else p.mood = clamp(p.mood - 0.01 * f);
     }
-    const hf = (onlineCount > 0 ? 1 : OFFLINE_FACTOR) * TICK_SECONDS;
-    house.clean = clamp(house.clean - RATE.clean * hf);
-    saveSoon();
+    house.clean = clamp(house.clean - RATE.clean * TICK_SECONDS);
+    house.lastSeen = Date.now();
+    markDirty(code, false);
     broadcast(code);
   }
 }, TICK_SECONDS * 1000);
@@ -267,9 +391,9 @@ wss.on("connection", (ws) => {
       const playerId = String(msg.playerId || "");
       if (!playerId || !ROLES.includes(msg.role)) return;
       const code = makeCode();
-      houses[code] = { code, players: {}, clean: 80, bowl: 0 };
+      houses[code] = { code, players: {}, clean: 80, bowl: 0, lastSeen: Date.now() };
       houses[code].players[msg.role] = makePlayer(playerId, msg.role, msg.name);
-      saveSoon();
+      markDirty(code, true);
       attach(ws, code, msg.role);
       return;
     }
@@ -296,7 +420,7 @@ wss.on("connection", (ws) => {
         return;
       }
       house.players[free] = makePlayer(playerId, free, msg.name);
-      saveSoon();
+      markDirty(code, true);
       attach(ws, code, free);
       return;
     }
@@ -313,7 +437,6 @@ wss.on("connection", (ws) => {
       if (["up", "down", "left", "right"].includes(msg.facing)) {
         p.facing = msg.facing;
       }
-      saveSoon();
       broadcast(ws.house);
       return;
     }
@@ -328,7 +451,7 @@ wss.on("connection", (ws) => {
       ws.lastAct = now;
       const text = doAction(house, ws.role);
       send(ws, { type: "toast", text });
-      saveSoon();
+      markDirty(code, false);
       broadcast(code);
       return;
     }
@@ -339,12 +462,22 @@ wss.on("connection", (ws) => {
     const code = ws.house;
     if (code && live[code] && live[code][ws.role] === ws) {
       delete live[code][ws.role];
+      if (houses[code]) {
+        if (!anyLive(code)) houses[code].lastSeen = Date.now();
+        markDirty(code, true);
+      }
       broadcast(code);
     }
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log("TamoLove запущен на порту " + PORT);
-});
+// ---------- Запуск ----------
+async function start() {
+  await initStorage();
+  for (const code of Object.keys(houses)) ensureHouse(houses[code]);
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log("TamoLove запущен на порту " + PORT);
+  });
+}
+start();
