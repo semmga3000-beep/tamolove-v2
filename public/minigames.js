@@ -375,9 +375,26 @@
     { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 8 } },
     { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 2 } },
     { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 8 } },
-    { id: "night", n: "Вторая тумбочка", e: "🗄️", c: 5, it: { t: "nightstand", x: 6, y: 8 } },
-    { id: "table", n: "Журнальный столик", e: "☕", c: 8, it: { t: "coffeetable", x: 17, y: 5, w: 2 } }
+    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 4, y: 10 } },
+    { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 17, y: 5, w: 2 } },
+    { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 17, y: 5, w: 2, solid: false } }
   ];
+  SPR.tvstand = (x, y, w) => {
+    const W = w * 16;
+    r(x, y + 4, W, 12, "#6b4a2c");
+    r(x, y + 4, W, 1, "#8f6a40");
+    r(x + 2, y + 7, 12, 6, "#4d3320");
+    r(x + W - 14, y + 7, 12, 6, "#4d3320");
+    r(x + 2, y + 13, 3, 3, "#3a2514");
+    r(x + W - 5, y + 13, 3, 3, "#3a2514");
+  };
+  SPR.tv = (x, y, w) => {
+    const W = w * 16;
+    r(x + 3, y - 10, W - 6, 14, "#22252e");
+    r(x + 5, y - 8, W - 10, 9, "#6fb6d8");
+    r(x + 6, y - 7, 6, 2, "#c8ecfa");
+    r(x + W / 2 - 3, y + 3, 6, 2, "#22252e");
+  };
   let owned = [];
   let coinsNow = 0;
   const shop = document.createElement("div");
@@ -392,11 +409,12 @@
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;gap:8px;margin:6px 0;text-align:left";
       const has = owned.includes(c.id);
+      const lock = c.need && !owned.includes(c.need);
       row.innerHTML = '<span style="font-size:24px">' + c.e + '</span><span style="flex:1;font-size:14px">' + c.n + "</span>";
       const b = document.createElement("button");
-      b.style.cssText = "border:none;border-radius:10px;color:#fff;font-size:14px;padding:8px 10px;background:" + (has ? "#9bc59b" : coinsNow >= c.c ? "#ff6f91" : "#c9b0b8");
+      b.style.cssText = "border:none;border-radius:10px;color:#fff;font-size:14px;padding:8px 10px;background:" + (has ? "#9bc59b" : coinsNow >= c.c && !lock ? "#ff6f91" : "#c9b0b8");
       b.textContent = has ? "Куплено ✅" : "🪙 " + c.c;
-      if (!has) b.onclick = () => sendMsg({ type: "buy", id: c.id });
+      if (!has) b.onclick = () => { if (lock) showToast("Сначала купи тумбу 📺"); else sendMsg({ type: "buy", id: c.id }); };
       row.appendChild(b);
       box.appendChild(row);
     }
