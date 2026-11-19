@@ -262,7 +262,7 @@ function makePlayer(id, role, name) {
   };
 }
 
-const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, table: 8 };
+const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, tvs: 6, tv: 10 };
 
 function publicState(code) {
   const house = houses[code];
@@ -570,6 +570,7 @@ wss.on("connection", (ws) => {
       if (!house.owned) house.owned = [];
       const cost = SHOP[msg.id];
       if (cost === undefined) return;
+      if (msg.id === "tv" && !house.owned.includes("tvs")) { send(ws, { type: "toast", text: "Сначала нужна тумба 📺" }); return; }
       if (house.owned.includes(msg.id)) { send(ws, { type: "toast", text: "Это уже куплено ✅" }); return; }
       if (house.coins < cost) { send(ws, { type: "toast", text: "Не хватает монет 🪙" }); return; }
       house.coins -= cost;
