@@ -171,6 +171,7 @@ const COOK_TEXT = [
 const ZONES = {
   stove: [{ x: 5, y: 1, w: 1, h: 1 }],
   bowl: [{ x: 7, y: 5, w: 1, h: 1 }],
+  table: [{ x: 3, y: 4, w: 4, h: 2 }],
   bed: [{ x: 1, y: 9, w: 3, h: 2 }],
   clean: [{ x: 17, y: 10, w: 1, h: 1 }, { x: 16, y: 12, w: 2, h: 1 }]
 };
@@ -338,6 +339,13 @@ function doAction(house, role) {
       p.carrying = false;
       return "Миска наполнена 🥣";
     }
+    // Ведущий съедает своё блюдо за столом (с левой стороны, подальше от миски)
+    if (p.carrying && near(p, "table") && !near(p, "bowl")) {
+      p.satiety = clamp(p.satiety + FOOD_FEED[p.tier] + 10);
+      p.mood = clamp(p.mood + FOOD_MOOD[p.tier] + 2);
+      p.carrying = false;
+      return "Приятного аппетита! 🍽️";
+    }
     if (p.carrying && other && dist(p, other) < 1.8) {
       other.satiety = clamp(other.satiety + FOOD_FEED[p.tier]);
       other.mood = clamp(other.mood + FOOD_MOOD[p.tier] + 3);
@@ -491,6 +499,65 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    // Ведомый просит присесть за стол к Ведущему
+    if (msg.type === "ask_sit") {
+      const code = ws.house;
+      if (!code || !houses[code] || ws.role !== "receiver") return;
+      const house = houses[code];
+      const me = house.players.receiver;
+      const cg = house.players.caregiver;
+      const sock = live[code] && live[code].caregiver;
+      if (!me || !cg) return;
+      if (!near(me, "table")) { send(ws, { type: "toast", text: "Подойди к столу" }); return; }
+      if (!sock || !cg.carrying || !near(cg, "table")) {
+        send(ws, { type: "toast", text: "За столом сейчас нет еды" });
+        return;
+      }
+      if (Date.now() - (house.sitAsk || 0) < 15000) {
+        send(ws, { type: "toast", text: "Подожди немного, уже спросили" });
+        return;
+      }
+      house.sitAsk = Date.now();
+      send(sock, { type: "sit_request", name: me.name });
+      send(ws, { type: "toast", text: "Спросили, можно ли сесть рядом 🪑" });
+      return;
+    }
+
+    // Ведущий отвечает на просьбу
+    if (msg.type === "sit_answer") {
+      const code = ws.house;
+      if (!code || !houses[code] || ws.role !== "caregiver") return;
+      const house = houses[code];
+      const p = house.players.caregiver;
+      const rec = house.players.receiver;
+      const rsock = live[code] && live[code].receiver;
+      if (!house.sitAsk || Date.now() - house.sitAsk > 30000) {
+        send(ws, { type: "toast", text: "Просьба уже устарела" });
+        return;
+      }
+      house.sitAsk = 0;
+      if (!msg.ok) {
+        send(ws, { type: "toast", text: "Ты отказал 🙅" });
+        if (rsock) send(rsock, { type: "toast", text: "Сейчас нельзя 😔" });
+        return;
+      }
+      if (!p || !rec || !p.carrying || !near(p, "table") || !near(rec, "table")) {
+        send(ws, { type: "toast", text: "Еды уже нет или Ведомый отошёл" });
+        return;
+      }
+      const gain = FOOD_FEED[p.tier] + 10;
+      p.satiety = clamp(p.satiety + gain);
+      rec.satiety = clamp(rec.satiety + gain);
+      p.mood = clamp(p.mood + FOOD_MOOD[p.tier] + 6);
+      rec.mood = clamp(rec.mood + FOOD_MOOD[p.tier] + 6);
+      p.carrying = false;
+      send(ws, { type: "toast", text: "Едите вместе! Вдвоём вкуснее ❤️🍽️" });
+      if (rsock) send(rsock, { type: "toast", text: "Вы едите вместе! Вдвоём вкуснее ❤️🍽️" });
+      markDirty(code, false);
+      broadcast(code);
+      return;
+    }
+
     if (msg.type === "act" || msg.type === "cook" || msg.type === "clean") {
       const code = ws.house;
       if (!code || !houses[code]) return;
@@ -535,3 +602,4 @@ async function start() {
   });
 }
 start();
+
