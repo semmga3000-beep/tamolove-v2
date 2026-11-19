@@ -155,6 +155,18 @@ const RATE = {                // падение в секунду, когда и
 };
 const REACH = 1.3;            // как близко надо подойти к предмету
 
+// Еда по качеству блюда (1 подгорело, 2 вкусно, 3 шедевр)
+const FOOD_BOWL = [0, 35, 50, 65];    // сколько еды попадёт в миску
+const FOOD_FEED = [0, 20, 30, 40];    // сколько сытости при кормлении с рук
+const FOOD_MOOD = [0, 1, 4, 8];       // бонус к настроению при кормлении
+const COOK_COINS = [0, 1, 2, 3];      // монеты за готовку
+const COOK_TEXT = [
+  "",
+  "Немного подгорело 😅 Но есть можно!",
+  "Вкусно получилось! 😋",
+  "Шедевр! Просто пальчики оближешь 🌟"
+];
+
 // Места, где можно что-то делать (в клетках)
 const ZONES = {
   stove: [{ x: 5, y: 1, w: 1, h: 1 }],
@@ -182,6 +194,7 @@ function dist(a, b) {
 function ensureHouse(house) {
   if (typeof house.clean !== "number") house.clean = 80;
   if (typeof house.bowl !== "number") house.bowl = 0;
+  if (typeof house.coins !== "number") house.coins = 0;
   if (typeof house.lastSeen !== "number") house.lastSeen = Date.now();
   for (const role of ROLES) {
     const p = house.players[role];
@@ -189,6 +202,7 @@ function ensureHouse(house) {
     if (typeof p.satiety !== "number") p.satiety = 80;
     if (typeof p.energy !== "number") p.energy = 80;
     if (typeof p.mood !== "number") p.mood = 80;
+    if (![1, 2, 3].includes(p.tier)) p.tier = 2;
     p.carrying = !!p.carrying;
   }
 }
@@ -241,7 +255,8 @@ function makePlayer(id, role, name) {
     satiety: 80,
     energy: 80,
     mood: 80,
-    carrying: false
+    carrying: false,
+    tier: 2
   };
 }
 
@@ -268,7 +283,11 @@ function publicState(code) {
     type: "state",
     code,
     players,
-    house: { clean: Math.round(house.clean), bowl: Math.round(house.bowl) }
+    house: {
+      clean: Math.round(house.clean),
+      bowl: Math.round(house.bowl),
+      coins: Math.round(house.coins)
+    }
   };
 }
 
@@ -307,19 +326,21 @@ function doAction(house, role) {
 
   if (role === "caregiver") {
     if (near(p, "stove")) {
+      // пока мини-игры нет в приложении, готовим по-старому (потом это уберём)
       if (p.carrying) return "Ты уже несёшь еду. Отнеси её в миску";
       p.carrying = true;
+      p.tier = 2;
       return "Еда готова! 🍲 Неси её к миске или покорми любимого";
     }
     if (near(p, "bowl")) {
       if (!p.carrying) return "Сначала приготовь еду на плите";
-      house.bowl = clamp(house.bowl + 50);
+      house.bowl = clamp(house.bowl + FOOD_BOWL[p.tier]);
       p.carrying = false;
       return "Миска наполнена 🥣";
     }
     if (p.carrying && other && dist(p, other) < 1.8) {
-      other.satiety = clamp(other.satiety + 30);
-      other.mood = clamp(other.mood + 5);
+      other.satiety = clamp(other.satiety + FOOD_FEED[p.tier]);
+      other.mood = clamp(other.mood + FOOD_MOOD[p.tier] + 3);
       p.mood = clamp(p.mood + 3);
       p.carrying = false;
       return "Накормлено! ❤️";
@@ -341,12 +362,41 @@ function doAction(house, role) {
   }
 
   if (near(p, "clean")) {
+    // пока мини-игры нет в приложении, убираем по-старому (потом это уберём)
     house.clean = clamp(house.clean + (role === "caregiver" ? 8 : 4));
     p.mood = clamp(p.mood + 1);
     return "Стало чище ✨";
   }
 
   return "Здесь пока нечего делать";
+}
+
+// Готовка: игрок прошёл мини-игру и прислал результат (0-100)
+function doCook(house, role, score) {
+  const p = house.players[role];
+  if (role !== "caregiver") return "Готовит Ведущий 🍳";
+  if (!near(p, "stove")) return "Подойди к плите";
+  if (p.carrying) return "Ты уже несёшь еду. Отнеси её в миску";
+  const s = Math.max(0, Math.min(100, Number(score) || 0));
+  const tier = s >= 80 ? 3 : s >= 50 ? 2 : 1;
+  p.carrying = true;
+  p.tier = tier;
+  house.coins += COOK_COINS[tier];
+  return COOK_TEXT[tier] + " +" + COOK_COINS[tier] + " 🪙";
+}
+
+// Уборка: игрок оттёр пятна (0-8)
+function doClean(house, role, spots) {
+  const p = house.players[role];
+  if (!near(p, "clean")) return "Подойди к ведру или стиральной машине";
+  const n = Math.max(0, Math.min(8, Math.floor(Number(spots) || 0)));
+  if (n === 0) return "Ничего не удалось оттереть, попробуй ещё раз";
+  const gain = n * 3 * (role === "caregiver" ? 1 : 0.6);
+  house.clean = clamp(house.clean + gain);
+  const coins = n >= 6 ? 2 : n >= 3 ? 1 : 0;
+  house.coins += coins;
+  if (n >= 3) p.mood = clamp(p.mood + 1);
+  return (n >= 6 ? "Блестит! ✨" : "Стало чище ✨") + (coins ? " +" + coins + " 🪙" : "");
 }
 
 // ---------- Время идёт ----------
@@ -391,7 +441,7 @@ wss.on("connection", (ws) => {
       const playerId = String(msg.playerId || "");
       if (!playerId || !ROLES.includes(msg.role)) return;
       const code = makeCode();
-      houses[code] = { code, players: {}, clean: 80, bowl: 0, lastSeen: Date.now() };
+      houses[code] = { code, players: {}, clean: 80, bowl: 0, coins: 0, lastSeen: Date.now() };
       houses[code].players[msg.role] = makePlayer(playerId, msg.role, msg.name);
       markDirty(code, true);
       attach(ws, code, msg.role);
@@ -441,15 +491,19 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    if (msg.type === "act") {
+    if (msg.type === "act" || msg.type === "cook" || msg.type === "clean") {
       const code = ws.house;
       if (!code || !houses[code]) return;
       const house = houses[code];
       if (!house.players[ws.role]) return;
       const now = Date.now();
-      if (now - (ws.lastAct || 0) < 500) return;
+      const gap = msg.type === "act" ? 500 : 3000;
+      if (now - (ws.lastAct || 0) < gap) return;
       ws.lastAct = now;
-      const text = doAction(house, ws.role);
+      let text;
+      if (msg.type === "cook") text = doCook(house, ws.role, msg.score);
+      else if (msg.type === "clean") text = doClean(house, ws.role, msg.spots);
+      else text = doAction(house, ws.role);
       send(ws, { type: "toast", text });
       markDirty(code, false);
       broadcast(code);
