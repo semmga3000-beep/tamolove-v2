@@ -290,6 +290,7 @@
     if (game) return true;
     if (wantStove()) { startCook(); return true; }
     if (wantClean()) { startScrub(); return true; }
+    if (typeof wantSit === "function" && wantSit()) { sendMsg({ type: "ask_sit" }); return true; }
     return false;
   }
 
@@ -317,6 +318,54 @@
     },
     true
   );
+
+  // ---------- Просьба сесть за стол ----------
+  const ask = document.createElement("div");
+  ask.id = "sitAsk";
+  ask.style.cssText =
+    "position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:25;display:none;background:#fff8f0;border:3px solid #6b2d45;border-radius:16px;padding:14px;width:min(88vw,320px);text-align:center;color:#6b2d45;font-family:sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.3)";
+  ask.innerHTML =
+    '<div id="sitAskText" style="font-weight:bold;font-size:16px;margin-bottom:10px"></div>' +
+    '<div style="display:flex;gap:8px">' +
+    '<button class="miniBtn" id="sitYes" style="margin:0;font-size:16px;padding:12px">Разрешить</button>' +
+    '<button class="miniBtn" id="sitNo" style="margin:0;font-size:16px;padding:12px;background:#c9a0b0">Не сейчас</button></div>';
+  document.body.appendChild(ask);
+  let askTimer = null;
+  function hideAsk() { ask.style.display = "none"; clearTimeout(askTimer); }
+  function answerAsk(ok) { hideAsk(); sendMsg({ type: "sit_answer", ok: ok }); }
+  document.getElementById("sitYes").addEventListener("click", () => answerAsk(true));
+  document.getElementById("sitNo").addEventListener("click", () => answerAsk(false));
+
+  const wrapped = handleMessage;
+  handleMessage = function (msg) {
+    if (msg && msg.type === "sit_request") {
+      document.getElementById("sitAskText").textContent =
+        (msg.name || "Партнёр") + " просит сесть рядом и поесть вместе. Разрешить? 🪑";
+      ask.style.display = "block";
+      clearTimeout(askTimer);
+      askTimer = setTimeout(hideAsk, 28000);
+      return;
+    }
+    wrapped(msg);
+  };
+
+  function wantSit() {
+    return !!(
+      session && myRole === "receiver" && partner.present && partner.carrying &&
+      near(player, "table") && near(partner, "table") && !near(player, "bowl")
+    );
+  }
+
+  // Ведущий ест своё блюдо за столом (слева от стола, подальше от миски)
+  ZONES.table = [{ x: 3, y: 4, w: 4, h: 2 }];
+  const oldActionInfo = actionInfo;
+  actionInfo = function () {
+    if (wantSit()) return ["🪑", "Сесть рядом"];
+    if (session && myRole === "caregiver" && player.carrying && near(player, "table") && !near(player, "bowl")) {
+      return ["🍽️", "Поесть"];
+    }
+    return oldActionInfo();
+  };
 
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
