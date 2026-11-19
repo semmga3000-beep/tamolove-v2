@@ -367,5 +367,62 @@
     return oldActionInfo();
   };
 
+
+  // ---------- Магазин мебели ----------
+  const CATALOG = [
+    { id: "plant1", n: "Цветок у кухни", e: "🪴", c: 3, it: { t: "plant", x: 8, y: 3 } },
+    { id: "plant2", n: "Цветок в гостиной", e: "🪴", c: 3, it: { t: "plant", x: 11, y: 5 } },
+    { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 9 } },
+    { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 4 } },
+    { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 5, y: 9 } },
+    { id: "night", n: "Вторая тумбочка", e: "🗄️", c: 5, it: { t: "nightstand", x: 6, y: 9 } },
+    { id: "table", n: "Журнальный столик", e: "☕", c: 8, it: { t: "coffeetable", x: 17, y: 3, w: 2 } }
+  ];
+  let owned = [];
+  let coinsNow = 0;
+  const shop = document.createElement("div");
+  shop.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
+  shop.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;max-height:85%;overflow:auto;text-align:center"><b style="font-size:18px">🛒 Магазин</b><div id="shopCoins" style="margin:6px 0"></div><div id="shopList"></div><button id="shopClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
+  document.body.appendChild(shop);
+  function renderShop() {
+    document.getElementById("shopCoins").textContent = "У вас: 🪙 " + coinsNow;
+    const box = document.getElementById("shopList");
+    box.innerHTML = "";
+    for (const c of CATALOG) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:8px;margin:6px 0;text-align:left";
+      const has = owned.includes(c.id);
+      row.innerHTML = '<span style="font-size:24px">' + c.e + '</span><span style="flex:1;font-size:14px">' + c.n + "</span>";
+      const b = document.createElement("button");
+      b.style.cssText = "border:none;border-radius:10px;color:#fff;font-size:14px;padding:8px 10px;background:" + (has ? "#9bc59b" : coinsNow >= c.c ? "#ff6f91" : "#c9b0b8");
+      b.textContent = has ? "Куплено ✅" : "🪙 " + c.c;
+      if (!has) b.onclick = () => sendMsg({ type: "buy", id: c.id });
+      row.appendChild(b);
+      box.appendChild(row);
+    }
+  }
+  function syncOwned() {
+    for (const c of CATALOG) {
+      if (owned.includes(c.id) && !LAYOUT.items.some((i) => i.sid === c.id)) {
+        LAYOUT.items.push(Object.assign({ w: 1, h: 1, solid: true, sid: c.id }, c.it));
+      }
+    }
+  }
+  const shopBtn = document.createElement("button");
+  shopBtn.textContent = "🛒 Магазин";
+  shopBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#ffb347;color:#fff;font-size:13px;padding:4px 10px";
+  shopBtn.onclick = () => { renderShop(); shop.style.display = "flex"; };
+  if (top) top.appendChild(shopBtn);
+  document.getElementById("shopClose").onclick = () => { shop.style.display = "none"; };
+  const prevHandle = handleMessage;
+  handleMessage = function (msg) {
+    prevHandle(msg);
+    if (msg && msg.type === "state" && msg.house) {
+      if (Array.isArray(msg.house.owned)) { owned = msg.house.owned; syncOwned(); }
+      if (typeof msg.house.coins === "number") coinsNow = msg.house.coins;
+      if (shop.style.display === "flex") renderShop();
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
