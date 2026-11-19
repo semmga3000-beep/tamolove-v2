@@ -196,6 +196,7 @@ function ensureHouse(house) {
   if (typeof house.clean !== "number") house.clean = 80;
   if (typeof house.bowl !== "number") house.bowl = 0;
   if (typeof house.coins !== "number") house.coins = 0;
+  if (!Array.isArray(house.owned)) house.owned = [];
   if (typeof house.lastSeen !== "number") house.lastSeen = Date.now();
   for (const role of ROLES) {
     const p = house.players[role];
@@ -261,6 +262,8 @@ function makePlayer(id, role, name) {
   };
 }
 
+const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, table: 8 };
+
 function publicState(code) {
   const house = houses[code];
   const players = {};
@@ -287,7 +290,8 @@ function publicState(code) {
     house: {
       clean: Math.round(house.clean),
       bowl: Math.round(house.bowl),
-      coins: Math.round(house.coins)
+      coins: Math.round(house.coins),
+      owned: house.owned || []
     }
   };
 }
@@ -558,6 +562,26 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    if (msg.type === "buy") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const house = houses[code];
+      if (!house.players[ws.role]) return;
+      if (!house.owned) house.owned = [];
+      const cost = SHOP[msg.id];
+      if (cost === undefined) return;
+      if (house.owned.includes(msg.id)) { send(ws, { type: "toast", text: "Это уже куплено ✅" }); return; }
+      if (house.coins < cost) { send(ws, { type: "toast", text: "Не хватает монет 🪙" }); return; }
+      house.coins -= cost;
+      house.owned.push(msg.id);
+      for (const rl of ROLES) {
+        if (live[code] && live[code][rl]) send(live[code][rl], { type: "toast", text: "Новая вещь в доме! 🛋️✨" });
+      }
+      markDirty(code, true);
+      broadcast(code);
+      return;
+    }
+
     if (msg.type === "act" || msg.type === "cook" || msg.type === "clean") {
       const code = ws.house;
       if (!code || !houses[code]) return;
@@ -602,4 +626,3 @@ async function start() {
   });
 }
 start();
-
