@@ -370,13 +370,13 @@
 
   // ---------- Магазин мебели ----------
   const CATALOG = [
-    { id: "plant1", n: "Цветок у кухни", e: "🪴", c: 3, it: { t: "plant", x: 8, y: 3 } },
-    { id: "plant2", n: "Цветок в гостиной", e: "🪴", c: 3, it: { t: "plant", x: 11, y: 5 } },
-    { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 9 } },
-    { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 4 } },
-    { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 5, y: 9 } },
-    { id: "night", n: "Вторая тумбочка", e: "🗄️", c: 5, it: { t: "nightstand", x: 6, y: 9 } },
-    { id: "table", n: "Журнальный столик", e: "☕", c: 8, it: { t: "coffeetable", x: 17, y: 3, w: 2 } }
+    { id: "plant1", n: "Цветок у кухни", e: "🪴", c: 3, it: { t: "plant", x: 9, y: 1 } },
+    { id: "plant2", n: "Цветок в гостиной", e: "🪴", c: 3, it: { t: "plant", x: 11, y: 2 } },
+    { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 8 } },
+    { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 2 } },
+    { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 8 } },
+    { id: "night", n: "Вторая тумбочка", e: "🗄️", c: 5, it: { t: "nightstand", x: 6, y: 8 } },
+    { id: "table", n: "Журнальный столик", e: "☕", c: 8, it: { t: "coffeetable", x: 17, y: 5, w: 2 } }
   ];
   let owned = [];
   let coinsNow = 0;
