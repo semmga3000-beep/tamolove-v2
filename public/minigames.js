@@ -1518,5 +1518,22 @@
     }
   };
 
+
+  // ---------- Уведомления Telegram: кнопка в меню ----------
+  let notifOn = true;
+  const nb = document.createElement("button");
+  nb.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#6fb7a0;color:#fff";
+  const paintN = () => { nb.textContent = "🔔 Уведомления" + (notifOn ? ": вкл" : ": выкл"); };
+  paintN();
+  nb.onclick = () => { sendMsg({ type: "notif", on: !notifOn }); };
+  menu.appendChild(nb);
+  const prevH11 = handleMessage;
+  handleMessage = function (msg) {
+    prevH11(msg);
+    if (msg && msg.type === "state" && msg.players && myRole && msg.players[myRole] && typeof msg.players[myRole].notify === "boolean") {
+      notifOn = msg.players[myRole].notify; paintN();
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
