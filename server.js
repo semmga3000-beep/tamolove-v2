@@ -534,7 +534,7 @@ wss.on("connection", (ws) => {
         const x = Math.floor(Number(msg.x)), y = Math.floor(Number(msg.y));
         if (!/^[a-z0-9_]{1,30}$/.test(id) || !(x >= 0 && x < 20 && y >= 0 && y < 14)) return;
         if (!CUR.moved) CUR.moved = {};
-        CUR.moved[id] = { x, y };
+        CUR.moved[id] = { x, y, r: Math.max(0, Math.min(3, Math.floor(Number(msg.r) || 0))) };
       }
       markDirty(ws.house, true);
       broadcast(ws.house);
