@@ -172,7 +172,7 @@ const ZONES = {
   stove: [{ x: 5, y: 1, w: 1, h: 1 }],
   bowl: [{ x: 7, y: 5, w: 1, h: 1 }],
   table: [{ x: 3, y: 4, w: 4, h: 2 }],
-  bed: [{ x: 1, y: 9, w: 3, h: 2 }],
+  bed: [{ x: 2, y: 9, w: 3, h: 2 }],
   clean: [{ x: 17, y: 10, w: 1, h: 1 }, { x: 16, y: 12, w: 2, h: 1 }]
 };
 
