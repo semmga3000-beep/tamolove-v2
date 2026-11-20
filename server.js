@@ -353,7 +353,8 @@ function touchStreak(house) {
 const QUESTS = [
   { id: "eat", n: "Съесть 5 порций 🍽️", t: 5, r: 5 },
   { id: "cook", n: "Приготовить 3 блюда 🍳", t: 3, r: 4 },
-  { id: "clean", n: "Убраться 2 раза 🧹", t: 2, r: 3 }
+  { id: "clean", n: "Убраться 2 раза 🧹", t: 2, r: 3 },
+  { id: "dance", n: "Станцевать вместе 💃", t: 1, r: 4 }
 ];
 function today() {
   return new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -373,6 +374,26 @@ function qAdd(house, id, n) {
     return " 🎯 Задание выполнено! +" + d.r + " 🪙";
   }
   return "";
+}
+
+function finishDance(code, d) {
+  const house = houses[code];
+  if (!house || house.dance !== d || d.state !== "play") return;
+  d.state = "done";
+  const team = (d.scores.caregiver || 0) + (d.scores.receiver || 0);
+  let coins = team >= 56 ? 5 : team >= 44 ? 4 : team >= 30 ? 3 : team >= 16 ? 2 : 1;
+  if (house.danceAt && Date.now() - house.danceAt < 120000) coins = 0;
+  house.danceAt = Date.now();
+  house.coins += coins;
+  for (const rl of ROLES) {
+    const p = house.players[rl];
+    if (p) p.mood = clamp(p.mood + 6 + Math.round(team / 8));
+  }
+  const q = qAdd(house, "dance", 1);
+  const text = "Танец окончен! Очки " + team + "/64" + (coins ? " +" + coins + " 🪙" : " (монеты раз в 2 мин)") + q;
+  for (const rl of ROLES) if (live[code] && live[code][rl]) send(live[code][rl], { type: "dance_end", text });
+  markDirty(code, true);
+  broadcast(code);
 }
 
 function doAction(house, role) {
@@ -499,6 +520,41 @@ wss.on("connection", (ws) => {
       return;
     }
     if (ws.house && houses[ws.house] && msg.type !== "move") touchStreak(houses[ws.house]);
+
+    if (msg.type === "dance_invite" || msg.type === "dance_answer" || msg.type === "dance_score") {
+      const code = ws.house;
+      if (!code || !houses[code] || !live[code]) return;
+      const house = houses[code];
+      const other = ws.role === "caregiver" ? "receiver" : "caregiver";
+      const osock = live[code][other];
+      if (msg.type === "dance_invite") {
+        if (!osock) { send(ws, { type: "toast", text: "Партнёра нет в игре 😔" }); return; }
+        if (house.dance && Date.now() - house.dance.at < 60000) { send(ws, { type: "toast", text: "Танец уже идёт или ждёт ответа" }); return; }
+        house.dance = { state: "invite", from: ws.role, at: Date.now(), scores: {} };
+        send(osock, { type: "dance_invite", name: (house.players[ws.role] || {}).name || "Партнёр" });
+        send(ws, { type: "toast", text: "Позвали танцевать 💃" });
+        return;
+      }
+      const d = house.dance;
+      if (!d) return;
+      if (msg.type === "dance_answer") {
+        if (d.state !== "invite" || d.from === ws.role) return;
+        const inviter = live[code][d.from];
+        if (!msg.ok) { if (inviter) send(inviter, { type: "toast", text: "Сейчас не хочет танцевать 😔" }); house.dance = null; return; }
+        d.state = "play";
+        d.at = Date.now();
+        const seed = Math.floor(Math.random() * 1e9);
+        for (const rl of ROLES) if (live[code][rl]) send(live[code][rl], { type: "dance_start", seed });
+        setTimeout(() => finishDance(code, d), 40000);
+        return;
+      }
+      if (msg.type === "dance_score") {
+        if (d.state !== "play") return;
+        d.scores[ws.role] = Math.max(0, Math.min(32, Math.floor(Number(msg.hits) || 0)));
+        if (d.scores.caregiver !== undefined && d.scores.receiver !== undefined) finishDance(code, d);
+        return;
+      }
+    }
 
     if (msg.type === "streak_restore" || msg.type === "streak_reset") {
       const code = ws.house;
