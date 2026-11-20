@@ -297,6 +297,7 @@ function publicState(code) {
       coins: Math.round(house.coins),
       owned: house.owned || [],
       plan: house.plan || 0,
+      moved: house.moved || {},
       streak: { count: streakOf(house).count, broken: streakOf(house).broken, left: Math.max(0, 4 - streakOf(house).used) },
       quests: QUESTS.map((d) => {
         const q = qState(house);
@@ -524,6 +525,21 @@ wss.on("connection", (ws) => {
     }
     CUR = ws.house && houses[ws.house] ? houses[ws.house] : null;
     if (CUR && msg.type !== "move") touchStreak(CUR);
+
+    if (msg.type === "move_item" || msg.type === "reset_layout") {
+      if (!CUR) return;
+      if (msg.type === "reset_layout") CUR.moved = {};
+      else {
+        const id = String(msg.id || "");
+        const x = Math.floor(Number(msg.x)), y = Math.floor(Number(msg.y));
+        if (!/^[a-z0-9_]{1,30}$/.test(id) || !(x >= 0 && x < 20 && y >= 0 && y < 14)) return;
+        if (!CUR.moved) CUR.moved = {};
+        CUR.moved[id] = { x, y };
+      }
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
 
     if (msg.type === "set_plan") {
       if (!CUR) return;
