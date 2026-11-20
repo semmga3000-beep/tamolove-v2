@@ -657,5 +657,119 @@
     }
   };
 
+
+  // ---------- Парный танец (как DDR) ----------
+  const NOTES_N = 32, GAP = 700, LEAD = 2000, FALL = 1500;
+  const LANES = ["◀", "▼", "▲", "▶"];
+  const LCOL = ["#ff6f91", "#6fa8ff", "#7ed08a", "#ffd24d"];
+  const dBtn = document.createElement("button");
+  dBtn.textContent = "💃 Танцы";
+  dBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#e06fd0;color:#fff;font-size:13px;padding:4px 10px";
+  if (top) top.appendChild(dBtn);
+  const dOv = document.createElement("div");
+  dOv.style.cssText = "position:fixed;inset:0;background:rgba(40,15,50,.92);display:none;z-index:50;flex-direction:column;align-items:center;justify-content:center;gap:8px;touch-action:none";
+  dOv.innerHTML = '<div id="dTitle" style="color:#fff;font-size:18px;font-weight:bold">💃 Танцуем вместе!</div><canvas id="dCan" width="280" height="300" style="background:#2a1838;border-radius:12px;border:3px solid #e06fd0"></canvas><div id="dRow" style="display:flex;gap:8px"></div><div id="dInfo" style="color:#fff;font-size:14px;min-height:36px;text-align:center;max-width:300px"></div><button id="dClose" style="display:none;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 24px">Закрыть</button>';
+  document.body.appendChild(dOv);
+  const dCan = dOv.querySelector("#dCan"), dc = dCan.getContext("2d");
+  const dInfo = dOv.querySelector("#dInfo"), dClose = dOv.querySelector("#dClose");
+  const dRow = dOv.querySelector("#dRow");
+  let dance = null;
+  function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  function press(l) {
+    if (!dance || dance.over) return;
+    const now = performance.now() - dance.t0;
+    let best = null;
+    for (const n of dance.notes) {
+      if (n.l !== l || n.done) continue;
+      const d = Math.abs(now - (n.t + FALL));
+      if (d < 260 && (!best || d < best.d)) best = { n, d };
+    }
+    dance.flash[l] = now;
+    if (best) { best.n.done = 1; dance.hits++; dance.msg = best.d < 110 ? "Идеально! ✨" : "Хорошо!"; dance.msgAt = now; }
+    else { dance.msg = "Мимо"; dance.msgAt = now; }
+  }
+  LANES.forEach((a, i) => {
+    const b = document.createElement("button");
+    b.textContent = a;
+    b.style.cssText = "width:62px;height:62px;border:none;border-radius:14px;font-size:30px;color:#fff;background:" + LCOL[i];
+    b.addEventListener("pointerdown", (e) => { e.preventDefault(); press(i); });
+    dRow.appendChild(b);
+  });
+  window.addEventListener("keydown", (e) => {
+    if (dOv.style.display === "none") return;
+    const m = { ArrowLeft: 0, ArrowDown: 1, ArrowUp: 2, ArrowRight: 3 }[e.key];
+    if (m !== undefined) { e.preventDefault(); e.stopPropagation(); press(m); }
+  }, true);
+  function drawDance(now) {
+    if (!dance) return;
+    const t = now - dance.t0;
+    dc.clearRect(0, 0, 280, 300);
+    const lw = 70, hitY = 250;
+    for (let i = 0; i < 4; i++) {
+      dc.fillStyle = i % 2 ? "#331f44" : "#2a1838";
+      dc.fillRect(i * lw, 0, lw, 300);
+      const fl = dance.flash[i] !== undefined && t - dance.flash[i] < 150;
+      dc.fillStyle = fl ? LCOL[i] : "rgba(255,255,255,0.15)";
+      dc.fillRect(i * lw + 6, hitY - 6, lw - 12, 12);
+    }
+    dc.font = "bold 34px sans-serif"; dc.textAlign = "center"; dc.textBaseline = "middle";
+    for (const n of dance.notes) {
+      if (n.done) continue;
+      const y = hitY - (n.t + FALL - t) * (hitY / FALL);
+      if (y < -20 || y > 330) continue;
+      dc.fillStyle = LCOL[n.l];
+      dc.fillText(LANES[n.l], n.l * lw + lw / 2, y);
+    }
+    dc.fillStyle = "#fff"; dc.font = "bold 14px sans-serif";
+    dc.fillText("Очки: " + dance.hits + " / " + NOTES_N, 140, 14);
+    if (dance.msg && t - dance.msgAt < 500) dc.fillText(dance.msg, 140, 40);
+    if (t < 0) { dc.font = "bold 44px sans-serif"; dc.fillText(String(Math.ceil(-t / 1000)), 140, 130); }
+    if (!dance.over && t > dance.end) {
+      dance.over = true;
+      sendMsg({ type: "dance_score", hits: dance.hits });
+      dInfo.textContent = "Ждём партнёра… 💞";
+    }
+  }
+  function dLoop(now) {
+    if (dOv.style.display === "none") return;
+    drawDance(now);
+    requestAnimationFrame(dLoop);
+  }
+  function startDance(seed) {
+    const R = rng(seed);
+    const notes = [];
+    for (let i = 0; i < NOTES_N; i++) notes.push({ t: LEAD + i * GAP, l: Math.floor(R() * 4), done: 0 });
+    dance = { notes, hits: 0, flash: {}, over: false, msg: "", msgAt: 0, t0: performance.now() + 3000, end: LEAD + NOTES_N * GAP + FALL + 400 };
+    dInfo.textContent = "Жми стрелки, когда они долетят до полоски!";
+    dClose.style.display = "none";
+    dOv.style.display = "flex";
+    requestAnimationFrame(dLoop);
+  }
+  dClose.onclick = () => { dOv.style.display = "none"; dance = null; };
+  dBtn.onclick = () => sendMsg({ type: "dance_invite" });
+  const dAsk = document.createElement("div");
+  dAsk.style.cssText = "position:fixed;left:10px;right:10px;bottom:90px;background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:12px;display:none;z-index:45;text-align:center";
+  dAsk.innerHTML = '<div id="dAskT" style="font-size:15px;font-weight:bold;margin-bottom:8px"></div><button id="dYes" style="border:none;border-radius:12px;background:#e06fd0;color:#fff;font-size:16px;padding:10px 18px;margin:0 6px">Танцуем!</button><button id="dNo" style="border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 18px;margin:0 6px">Не сейчас</button>';
+  document.body.appendChild(dAsk);
+  dAsk.querySelector("#dYes").onclick = () => { dAsk.style.display = "none"; sendMsg({ type: "dance_answer", ok: true }); };
+  dAsk.querySelector("#dNo").onclick = () => { dAsk.style.display = "none"; sendMsg({ type: "dance_answer", ok: false }); };
+  const prevH6 = handleMessage;
+  handleMessage = function (msg) {
+    prevH6(msg);
+    if (!msg) return;
+    if (msg.type === "dance_invite") {
+      dAsk.querySelector("#dAskT").textContent = msg.name + " зовёт танцевать 💃";
+      dAsk.style.display = "block";
+      setTimeout(() => { dAsk.style.display = "none"; }, 28000);
+    } else if (msg.type === "dance_start") {
+      dAsk.style.display = "none";
+      startDance(msg.seed);
+    } else if (msg.type === "dance_end") {
+      if (dance) dance.over = true;
+      dInfo.textContent = msg.text;
+      dClose.style.display = "inline-block";
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
