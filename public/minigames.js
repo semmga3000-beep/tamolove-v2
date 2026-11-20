@@ -570,5 +570,26 @@
     }
   };
 
+
+  // ---------- "Был в сети" ----------
+  function ago(ms) {
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return "только что";
+    if (m < 60) return m + " мин назад";
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + " ч назад";
+    return Math.floor(h / 24) + " дн назад";
+  }
+  const prevH3 = handleMessage;
+  handleMessage = function (msg) {
+    prevH3(msg);
+    if (msg && msg.type === "state" && msg.players && partnerRole) {
+      const o = msg.players[partnerRole];
+      if (o && !o.online && o.seen) {
+        partnerInfo.textContent = o.name + " спит 💤 · был(а) в сети " + ago(Date.now() - o.seen);
+      }
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
