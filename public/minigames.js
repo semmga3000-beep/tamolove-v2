@@ -370,19 +370,19 @@
 
   // ---------- Магазин мебели ----------
   const CATALOG = [
-    { id: "plant1", n: "Цветок у кухни", e: "🪴", c: 3, it: { t: "plant", x: 9, y: 1 } },
-    { id: "plant2", n: "Цветок в гостиной", e: "🪴", c: 3, it: { t: "plant", x: 11, y: 2 } },
-    { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 8 } },
-    { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 2 } },
-    { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 5, y: 8 } },
-    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 1, y: 11 } },
-    { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 14, y: 1, w: 2 } },
-    { id: "arm", n: "Кресло", e: "🛋️", c: 7, it: { t: "armchair", x: 11, y: 5 } },
-    { id: "pouf", n: "Пуф на кухне", e: "🟣", c: 4, it: { t: "pouf", x: 9, y: 4 } },
-    { id: "lamp3", n: "Лампа на кухне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 6 } },
-    { id: "shelf", n: "Книжный шкаф в спальне", e: "📚", c: 8, it: { t: "bookshelf", x: 2, y: 8, w: 2 } },
-    { id: "aqua", n: "Аквариум", e: "🐠", c: 12, it: { t: "aquarium", x: 14, y: 8, w: 2 } },
-    { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 14, y: 1, w: 2, solid: false } }
+    { id: "plant1", n: "Цветок у кухни", e: "🪴", c: 3, it: { t: "plant", x: 9, y: 1 }, it2: { x: 6, y: 8 } },
+    { id: "plant2", n: "Цветок в гостиной", e: "🪴", c: 3, it: { t: "plant", x: 11, y: 2 }, it2: { x: 13, y: 8 } },
+    { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 8 }, it2: { x: 6, y: 2 } },
+    { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 2 }, it2: { x: 13, y: 2 } },
+    { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 5, y: 8 }, it2: { x: 6, y: 4 } },
+    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 1, y: 11 }, it2: { x: 1, y: 3 } },
+    { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 14, y: 1, w: 2 }, it2: { x: 10, y: 1, w: 2 } },
+    { id: "arm", n: "Кресло", e: "🛋️", c: 7, it: { t: "armchair", x: 11, y: 5 }, it2: { x: 13, y: 6 } },
+    { id: "pouf", n: "Пуф на кухне", e: "🟣", c: 4, it: { t: "pouf", x: 9, y: 4 }, it2: { x: 1, y: 9 } },
+    { id: "lamp3", n: "Лампа на кухне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 6 }, it2: { x: 1, y: 8 } },
+    { id: "shelf", n: "Книжный шкаф в спальне", e: "📚", c: 8, it: { t: "bookshelf", x: 2, y: 8, w: 2 }, it2: { x: 12, y: 1, w: 2 } },
+    { id: "aqua", n: "Аквариум", e: "🐠", c: 12, it: { t: "aquarium", x: 14, y: 8, w: 2 }, it2: { x: 15, y: 5, w: 2 } },
+    { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 14, y: 1, w: 2, solid: false }, it2: { x: 10, y: 1, w: 2, solid: false } }
   ];
   SPR.armchair = (x, y) => {
     r(x + 1, y + 2, 14, 13, "#8a5a8f");
@@ -457,8 +457,8 @@
     LAYOUT.items = LAYOUT.items.filter((i) => !i.sid);
     for (const c of CATALOG) {
       if (!owned.includes(c.id)) continue;
-      const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id, k: c.id }, c.it);
-      pose(it, moved[c.id === "tv" ? "tvs" : c.id]);
+      const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id, k: c.id }, c.it, curPlan === 2 && c.it2 ? c.it2 : {});
+      pose(it, moved[keyOf(c.id === "tv" ? "tvs" : c.id)]);
       LAYOUT.items.push(it);
     }
   }
@@ -807,6 +807,63 @@
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const SNAP = { map: clone(LAYOUT.map), rugs: clone(LAYOUT.rugs), decor: clone(LAYOUT.decor), zones: clone(ZONES), spawn: clone(LAYOUT.spawn), items: LAYOUT.items.filter((i) => !i.sid).map((i) => { const c = clone(i); c.k = i.t + "_" + i.x + "_" + i.y; return c; }) };
   let moved = {};
+
+  // ---------- Третья планировка: большая гостиная по центру ----------
+  const PLAN2 = {
+    map: [
+      "####################",
+      "#bbbbbb#llllll#cccc#",
+      "#bbbbbb#llllll#cccc#",
+      "#bbbbbbdllllll#cccc#",
+      "#bbbbbb#lllllldcccc#",
+      "#bbbbbb#llllll#cccc#",
+      "###d####llllll#cccc#",
+      "#kkkkkk#llllll#cccc#",
+      "#kkkkkk#llllll#cccc#",
+      "#kkkkkkdllllll#cccc#",
+      "#kkkkkk#llllll#cccc#",
+      "#kkkkkk#llllll#cccc#",
+      "#kkkkkk#llllll#cccc#",
+      "####################"
+    ],
+    rugs: [
+      { x: 2, y: 3, w: 4, h: 2, border: "#cdb0df", body: "#a98ac6", inner: "#b79bd1" },
+      { x: 2, y: 9, w: 4, h: 4, border: "#3f6b3f", body: "#4f8a4f", inner: "#5b9a58" },
+      { x: 8, y: 3, w: 6, h: 5, border: "#e0bf8a", body: "#a23f3f", inner: "#b04a48" },
+      { x: 15, y: 7, w: 4, h: 3, border: "#a3c7da", body: "#7fb0c9", inner: "#8dbcd3" }
+    ],
+    decor: [
+      { t: "window", x: 2, y: 0, w: 2 },
+      { t: "window", x: 10, y: 0, w: 2 },
+      { t: "window", x: 16, y: 0, w: 2 },
+      { t: "picture", x: 1, y: 6, w: 1 },
+      { t: "shelf", x: 4, y: 6, w: 2 }
+    ],
+    zones: {
+      stove: [{ x: 5, y: 7, w: 1, h: 1 }],
+      bowl: [{ x: 6, y: 11, w: 1, h: 1 }],
+      table: [{ x: 2, y: 10, w: 4, h: 2 }],
+      bed: [{ x: 1, y: 1, w: 3, h: 2 }],
+      clean: [{ x: 16, y: 3, w: 3, h: 1 }]
+    },
+    spawn: { caregiver: { x: 10.5, y: 3.5 }, receiver: { x: 12.5, y: 3.5 } },
+    items: [
+      { t: "bed", x: 1, y: 1, w: 3, h: 2 }, { t: "nightstand", x: 4, y: 1 }, { t: "wardrobe", x: 5, y: 1, w: 2 },
+      { t: "dresser", x: 5, y: 5, w: 2 }, { t: "plant", x: 1, y: 5 },
+      { t: "counter", x: 1, y: 7, w: 2 }, { t: "sink", x: 4, y: 7 }, { t: "stove", x: 5, y: 7 }, { t: "fridge", x: 6, y: 7 },
+      { t: "table", x: 3, y: 10, w: 2, h: 2 },
+      { t: "chair", x: 2, y: 10, dir: "right" }, { t: "chair", x: 2, y: 11, dir: "right" },
+      { t: "chair", x: 5, y: 10, dir: "left" }, { t: "chair", x: 5, y: 11, dir: "left" },
+      { t: "bowl", x: 6, y: 11, solid: false }, { t: "plant", x: 6, y: 12 },
+      { t: "bookshelf", x: 8, y: 1, w: 2 }, { t: "lamp", x: 13, y: 5 },
+      { t: "coffeetable", x: 10, y: 5, w: 2 }, { t: "sofa", x: 9, y: 8, w: 4 },
+      { t: "plant", x: 8, y: 12 }, { t: "plant", x: 13, y: 12 },
+      { t: "cabinet", x: 15, y: 1, w: 2 }, { t: "plant", x: 18, y: 1 },
+      { t: "bucket", x: 16, y: 3 }, { t: "washer", x: 17, y: 3 }, { t: "basket", x: 18, y: 3 },
+      { t: "plant", x: 15, y: 12 }, { t: "plant", x: 18, y: 12 }
+    ].map((i) => { i.w = i.w || 1; i.h = i.h || 1; if (i.solid === undefined) i.solid = true; i.k = i.t + "_" + i.x + "_" + i.y; return i; })
+  };
+  const keyOf = (k) => (curPlan === 2 ? "q_" + k : k);
   let curPlan = null;
   // применяем сохранённое положение (x, y, r) к предмету
   function pose(it, m) {
@@ -823,27 +880,27 @@
   const mx = (o) => Object.assign({}, o, { x: 20 - o.x - (o.w || 1) });
   function applyPlan(n, mirrorMe) {
     const f = n === 1;
-    LAYOUT.map = f ? SNAP.map.map((row) => row.split("").reverse().join("")) : clone(SNAP.map);
-    LAYOUT.rugs = f ? SNAP.rugs.map(mx) : clone(SNAP.rugs);
-    LAYOUT.decor = f ? SNAP.decor.map(mx) : clone(SNAP.decor);
-    LAYOUT.items = SNAP.items.map((i) => {
+    const SRC = n === 2 ? PLAN2 : SNAP;
+    curPlan = n;
+    LAYOUT.map = f ? SRC.map.map((row) => row.split("").reverse().join("")) : clone(SRC.map);
+    LAYOUT.rugs = f ? SRC.rugs.map(mx) : clone(SRC.rugs);
+    LAYOUT.decor = f ? SRC.decor.map(mx) : clone(SRC.decor);
+    LAYOUT.items = SRC.items.map((i) => {
       const c = clone(i);
-      curPlan = n;
-      pose(c, moved[c.k]);
+      pose(c, moved[keyOf(c.k)]);
       if (f) { if (c.dir === "left") c.dir = "right"; else if (c.dir === "right") c.dir = "left"; }
       return c;
     });
-    LAYOUT.spawn = f ? { caregiver: { x: 20 - SNAP.spawn.caregiver.x, y: SNAP.spawn.caregiver.y }, receiver: { x: 20 - SNAP.spawn.receiver.x, y: SNAP.spawn.receiver.y } } : clone(SNAP.spawn);
+    LAYOUT.spawn = f ? { caregiver: { x: 20 - SRC.spawn.caregiver.x, y: SRC.spawn.caregiver.y }, receiver: { x: 20 - SRC.spawn.receiver.x, y: SRC.spawn.receiver.y } } : clone(SRC.spawn);
     for (const k of Object.keys(ZONES)) delete ZONES[k];
-    for (const k of Object.keys(SNAP.zones)) ZONES[k] = f ? SNAP.zones[k].map(mx) : clone(SNAP.zones[k]);
+    for (const k of Object.keys(SRC.zones)) ZONES[k] = f ? SRC.zones[k].map(mx) : clone(SRC.zones[k]);
     if (mirrorMe) player.x = 20 - player.x;
-    curPlan = n;
     syncOwned();
     buildBackground();
   }
   const planBtn = document.createElement("button");
   planBtn.textContent = "🏠 План дома";
-  planBtn.onclick = () => sendMsg({ type: "set_plan", plan: curPlan === 1 ? 0 : 1 });
+  planBtn.onclick = () => sendMsg({ type: "set_plan", plan: ((curPlan || 0) + 1) % 3 });
   const prevH7 = handleMessage;
   handleMessage = function (msg) {
     if (msg && msg.type === "state" && msg.house && msg.house.moved) {
@@ -854,7 +911,11 @@
       }
     }
     if (msg && msg.type === "state" && msg.house && typeof msg.house.plan === "number" && msg.house.plan !== curPlan) {
-      applyPlan(msg.house.plan, curPlan !== null);
+      const prevP = curPlan;
+      applyPlan(msg.house.plan, prevP !== null && prevP !== 2 && msg.house.plan !== 2);
+      if (prevP !== null && (prevP === 2 || msg.house.plan === 2) && msg.players && msg.players[myRole]) {
+        player.x = msg.players[myRole].x; player.y = msg.players[myRole].y;
+      }
     }
     prevH7(msg);
   };
@@ -928,7 +989,7 @@
     const it = sel && itemByKey(sel);
     if (!it) return;
     if (!canPlace(it, nx, ny, nw, nh)) { showToast("Сюда нельзя 🚫"); return; }
-    const key = sel === "tv" ? "tvs" : sel;
+    const key = keyOf(sel === "tv" ? "tvs" : sel);
     const cx = curPlan === 1 ? 20 - nx - nw : nx;
     moved[key] = { x: cx, y: ny, r: nr };
     applyPlan(curPlan, false);
