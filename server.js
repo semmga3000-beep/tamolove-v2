@@ -911,7 +911,19 @@ wss.on("connection", (ws) => {
       if (houses[code]) {
         if (!anyLive(code)) houses[code].lastSeen = Date.now();
         const pl = houses[code].players[ws.role];
-        if (pl) pl.seen = Date.now();
+        if (pl) {
+          pl.seen = Date.now();
+          // уходит спать: встаёт у кровати
+          const hz = houses[code];
+          const bz = zonesFor(hz).bed[0];
+          if (bz) {
+            const frac = ws.role === "caregiver" ? 0.3 : 0.7;
+            let sx = bz.w >= bz.h ? bz.x + bz.w * frac : bz.x + bz.w / 2;
+            if (hz.plan === 1) sx = 20 - sx;
+            pl.x = Math.min(19.5, Math.max(0.5, sx));
+            pl.y = Math.min(13.5, bz.y + bz.h + 0.02);
+          }
+        }
         markDirty(code, true);
       }
       broadcast(code);
