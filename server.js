@@ -273,7 +273,7 @@ function makePlayer(id, role, name) {
   };
 }
 
-const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, tvs: 6, tv: 10, arm: 7, aqua: 12, shelf: 8, pouf: 4, lamp3: 4 };
+const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, tvs: 6, tv: 10, arm: 7, aqua: 12, shelf: 8, pouf: 4, lamp3: 4, shower: 10, w_pink: 5, w_mint: 5, w_lav: 5, w_sun: 5, w_blue: 5, f_light: 5, f_dark: 5, f_gray: 5, f_pink: 5 };
 
 function publicState(code) {
   const house = houses[code];
@@ -307,6 +307,7 @@ function publicState(code) {
       owned: house.owned || [],
       plan: house.plan || 0,
       moved: house.moved || {},
+      paint: house.paint || { wall: null, floor: null },
       streak: { count: streakOf(house).count, broken: streakOf(house).broken, left: Math.max(0, 4 - streakOf(house).used) },
       quests: QUESTS.map((d) => {
         const q = qState(house);
@@ -335,6 +336,7 @@ function attach(ws, code, role) {
   const old = live[code][role];
   if (old && old !== ws) {
     old.house = null;
+    send(old, { type: "kicked" });
     old.close();
   }
   live[code][role] = ws;
@@ -545,6 +547,17 @@ wss.on("connection", (ws) => {
         if (!CUR.moved) CUR.moved = {};
         CUR.moved[id] = { x, y, r: Math.max(0, Math.min(3, Math.floor(Number(msg.r) || 0))) };
       }
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "paint") {
+      if (!CUR) return;
+      if (!CUR.paint) CUR.paint = { wall: null, floor: null };
+      const okv = (v, pre) => v === null || (typeof v === "string" && v.startsWith(pre) && SHOP[v] !== undefined && (CUR.owned || []).includes(v));
+      if (msg.wall !== undefined && okv(msg.wall, "w_")) CUR.paint.wall = msg.wall;
+      if (msg.floor !== undefined && okv(msg.floor, "f_")) CUR.paint.floor = msg.floor;
       markDirty(ws.house, true);
       broadcast(ws.house);
       return;
