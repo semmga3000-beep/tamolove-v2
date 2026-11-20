@@ -965,7 +965,21 @@
     for (const k of Object.keys(SRC.zones)) ZONES[k] = f ? SRC.zones[k].map(mx) : clone(SRC.zones[k]);
     if (mirrorMe) player.x = 20 - player.x;
     syncOwned();
+    rebuildZones();
     buildBackground();
+  }
+  function rebuildZones() {
+    const z = { stove: [], bowl: [], table: [], bed: [], clean: [] };
+    for (const i of LAYOUT.items) {
+      const rect = { x: i.x, y: i.y, w: i.w, h: i.h };
+      if (i.sid) continue;
+      if (i.t === "stove") z.stove.push(rect);
+      else if (i.t === "bowl") z.bowl.push(rect);
+      else if (i.t === "bed") z.bed.push(rect);
+      else if (i.t === "table") z.table.push({ x: i.x - 1, y: i.y, w: i.w + 2, h: i.h });
+      else if (i.t === "bucket" || i.t === "washer" || i.t === "basket") z.clean.push(rect);
+    }
+    for (const k of Object.keys(z)) ZONES[k] = z[k];
   }
   const planBtn = document.createElement("button");
   planBtn.textContent = "🏠 План дома";
@@ -1032,7 +1046,7 @@
   }
 
   // ---------- Двигать мебель ----------
-  const LOCK = ["stove", "bowl", "table", "chair", "bed", "bucket", "washer", "basket"];
+  const LOCK = [];
   const TALL = ["bookshelf", "fireplace", "tv"];
   let editOn = false, sel = null;
   const hi = document.createElement("div");
@@ -1056,7 +1070,7 @@
     hi.style.height = (it.y + it.h - top0) * T * sc + "px";
     hi.style.display = "block";
   }
-  function canPlace(it, nx, ny, nw, nh) {
+  function canPlace(it, nx, ny, nw, nh, excl) {
     nw = nw || it.w; nh = nh || it.h;
     for (let tx = nx; tx < nx + nw; tx++) for (let ty = ny; ty < ny + nh; ty++) {
       if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
@@ -1066,7 +1080,7 @@
     if (it.solid) {
       const ov = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
       const me = { x: nx, y: ny, w: nw, h: nh };
-      for (const o of LAYOUT.items) if (o !== it && o.solid && ov(me, o)) return false;
+      for (const o of LAYOUT.items) if (o !== it && !(excl && excl.has(o)) && o.solid && ov(me, o)) return false;
       for (const pl of [player, partner]) if (pl && ov(me, { x: Math.floor(pl.x), y: Math.floor(pl.y), w: 1, h: 1 })) return false;
     }
     return true;
@@ -1086,15 +1100,27 @@
   function nudge(dx, dy) {
     const it = sel && itemByKey(sel);
     if (!it) return;
+    const mem = it.t === "table" ? LAYOUT.items.filter((i) => i.t === "table" || i.t === "chair") : [it];
+    const set = new Set(mem);
     for (let d = 1; d <= 3; d++) {
-      const nx = it.x + dx * d, ny = it.y + dy * d;
-      if (canPlace(it, nx, ny, it.w, it.h)) { setPose(nx, ny, canonRot(it), it.w, it.h); return; }
+      if (!mem.every((m) => canPlace(m, m.x + dx * d, m.y + dy * d, m.w, m.h, set))) continue;
+      for (const m of mem) {
+        const nx = m.x + dx * d, ny = m.y + dy * d;
+        const cx = curPlan === 1 ? 20 - nx - m.w : nx;
+        const key = keyOf(m.sid === "tv" ? "tvs" : m.k);
+        moved[key] = { x: cx, y: ny, r: canonRot(m) };
+        sendMsg({ type: "move_item", id: key, x: cx, y: ny, r: canonRot(m) });
+      }
+      applyPlan(curPlan, false);
+      posHi();
+      return;
     }
     showToast("Сюда нельзя 🚫");
   }
   function rotate() {
     const it = sel && itemByKey(sel);
     if (!it) return;
+    if (it.t === "table") { showToast("Стол со стульями не поворачивается 🪑"); return; }
     const nr = (canonRot(it) + 1) % 4;
     const ow = it.ow || it.w, oh = it.oh || it.h;
     setPose(it.x, it.y, nr, nr % 2 ? oh : ow, nr % 2 ? ow : oh);
@@ -1126,6 +1152,7 @@
       if (tx >= it.x && tx < it.x + it.w && (ty >= it.y && ty < it.y + it.h || !it.rot && TALL.includes(it.t) && ty === it.y - 1)) hit = it;
     }
     if (!hit) { sel = null; posHi(); return; }
+    if (hit.t === "chair") hit = LAYOUT.items.find((i) => i.t === "table") || hit;
     if (LOCK.includes(hit.t)) { showToast("Это двигать нельзя: на нём держится игра 🔒"); return; }
     sel = hit.sid === "tv" ? "tvs" : hit.k;
     eHint.textContent = "Выбрано. Двигай стрелками 👇";
