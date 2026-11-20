@@ -294,6 +294,7 @@ function publicState(code) {
       bowl: Math.round(house.bowl),
       coins: Math.round(house.coins),
       owned: house.owned || [],
+      streak: { count: streakOf(house).count, broken: streakOf(house).broken, left: Math.max(0, 4 - streakOf(house).used) },
       quests: QUESTS.map((d) => {
         const q = qState(house);
         return { id: d.id, n: d.n, p: Math.min(d.t, q.p[d.id] || 0), t: d.t, r: d.r, d: !!q.done[d.id] };
@@ -326,11 +327,29 @@ function attach(ws, code, role) {
   live[code][role] = ws;
   ws.house = code;
   ws.role = role;
+  if (houses[code]) touchStreak(houses[code]);
   send(ws, { type: "joined", code, role });
   broadcast(code);
 }
 
 // ---------- Действия ----------
+function streakOf(house) {
+  if (!house.streak) house.streak = { count: 0, last: 0, day: "", used: 0, week: "", broken: 0 };
+  return house.streak;
+}
+function touchStreak(house) {
+  const s = streakOf(house);
+  const now = Date.now();
+  const shifted = now + 5 * 3600 * 1000;
+  const wk = Math.floor((shifted / 86400000 + 3) / 7);
+  if (s.week !== wk) { s.week = wk; s.used = 0; }
+  if (s.broken) return;
+  if (s.last && now - s.last > 24 * 3600 * 1000) { s.broken = Math.max(1, s.count); return; }
+  s.last = now;
+  const day = new Date(shifted).toISOString().slice(0, 10);
+  if (s.day !== day) { s.day = day; s.count += 1; }
+}
+
 const QUESTS = [
   { id: "eat", n: "Съесть 5 порций 🍽️", t: 5, r: 5 },
   { id: "cook", n: "Приготовить 3 блюда 🍳", t: 3, r: 4 },
@@ -477,6 +496,30 @@ wss.on("connection", (ws) => {
     try {
       msg = JSON.parse(raw);
     } catch (e) {
+      return;
+    }
+    if (ws.house && houses[ws.house] && msg.type !== "move") touchStreak(houses[ws.house]);
+
+    if (msg.type === "streak_restore" || msg.type === "streak_reset") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const s = streakOf(houses[code]);
+      if (!s.broken) return;
+      if (msg.type === "streak_restore") {
+        if (s.used >= 4) { send(ws, { type: "toast", text: "Бесплатные восстановления на этой неделе закончились" }); return; }
+        s.used += 1;
+        s.broken = 0;
+        s.last = Date.now();
+        for (const rl of ROLES) if (live[code] && live[code][rl]) send(live[code][rl], { type: "toast", text: "Огонёк снова горит! 🔥" });
+      } else {
+        s.count = 0;
+        s.broken = 0;
+        s.last = 0;
+        s.day = "";
+        touchStreak(houses[code]);
+      }
+      markDirty(code, true);
+      broadcast(code);
       return;
     }
 
