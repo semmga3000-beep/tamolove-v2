@@ -375,9 +375,9 @@
     { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 8 } },
     { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 2 } },
     { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 8 } },
-    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 4, y: 10 } },
-    { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 17, y: 5, w: 2 } },
-    { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 17, y: 5, w: 2, solid: false } }
+    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 1, y: 9 } },
+    { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 13, y: 2, w: 2 } },
+    { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 13, y: 2, w: 2, solid: false } }
   ];
   SPR.tvstand = (x, y, w) => {
     const W = w * 16;
@@ -395,6 +395,12 @@
     r(x + 6, y - 7, 6, 2, "#c8ecfa");
     r(x + W / 2 - 3, y + 3, 6, 2, "#22252e");
   };
+  // кровать сдвигаем, чтобы тумбочки встали с двух сторон
+  for (const i of LAYOUT.items) {
+    if (i.t === "bed") i.x = 2;
+    else if (i.t === "nightstand" && i.x === 4 && i.y === 9 && !i.sid) i.x = 5;
+  }
+  if (ZONES.bed) ZONES.bed = [{ x: 2, y: 9, w: 3, h: 2 }];
   let owned = [];
   let coinsNow = 0;
   const shop = document.createElement("div");
