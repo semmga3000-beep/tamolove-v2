@@ -598,6 +598,7 @@
   }
   function sleepPrep(c, sleeping) {
     const nowt = performance.now();
+    c._lyX = undefined;
     if (!sleeping || c !== partner) {
       c._vx = c.x; c._vy = c.y; c._pth = null;
       return null;
@@ -628,6 +629,7 @@
     if (c._pi < c._pth.length) { c.tx = c.x; c.ty = c.y; return { lying: false }; }
     // пришёл: ложимся (для сортировки стоим у нижнего края кровати)
     c.x = c._srv.x; c.y = c._srv.y; c.tx = c.x; c.ty = c.y;
+    c._lyX = sp.x; c._lyY = sp.y - 0.3;
     return { lying: true, x: sp.x, y: sp.y };
   }
   function drawLying(look, sp) {
@@ -648,6 +650,15 @@
     ctx.font = "bold 6px sans-serif";
     ctx.fillText("z", lx + 12, ly - 13 + bob);
   }
+  const origName = drawName;
+  drawName = function (c, name, sleeping) {
+    if (c._lyX !== undefined) {
+      const sx = c.x, sy = c.y;
+      c.x = c._lyX; c.y = c._lyY;
+      origName(c, name, sleeping);
+      c.x = sx; c.y = sy;
+    } else origName(c, name, sleeping);
+  };
   drawCharacter = function (c, look, sleeping) {
     const sl = sleepPrep(c, sleeping);
     if (sl && sl.lying) { drawLying(look, sl); return; }
@@ -1119,27 +1130,118 @@
   };
 
 
-  // поворот мебели: рисуем предмет во временный холст и поворачиваем
+  // поворот мебели: у каждой вещи рисуем нужную сторону
   const scratch = document.createElement("canvas");
   scratch.width = 10 * T; scratch.height = 9 * T;
   const sctx = scratch.getContext("2d");
+  const SYM = ["plant", "lamp", "pouf", "bucket", "basket", "bowl", "chair"];
+  const FPAL = {
+    sofa: { dark: "#2a4a80", seat: "#3d6bb0", back: "#2f5490", arm: "#34609f" },
+    armchair: { dark: "#76497b", seat: "#b88fbd", back: "#8a5a8f", arm: "#a577aa" }
+  };
+  const BODY = {
+    bookshelf: ["#7a4a2a", 14], wardrobe: ["#8a5a2c", 10], dresser: ["#9a6a3a", 0], nightstand: ["#a4733f", 0],
+    table: ["#a8744c", 0], coffeetable: ["#a8744c", 0], tvstand: ["#6b4a2c", 0], tv: ["#22252e", 10],
+    cabinet: ["#5f8a9a", 0], counter: ["#d9c19a", 0], sink: ["#d9c19a", 0], stove: ["#7d8087", 0], fridge: ["#dfe4ea", 12],
+    washer: ["#f0f0f4", 0], shower: ["#b9d4e0", 14], aquarium: ["#5a8fb0", 0], fireplace: ["#8b8b92", 14]
+  };
+  function shade(hex, k) {
+    const n = parseInt(hex.slice(1), 16);
+    const f = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
+    return "#" + [f((n >> 16) & 255), f((n >> 8) & 255), f(n & 255)].map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
+  function sofaLike(x, y, w, h, rot, p) {
+    const W = w * T, H = h * T, dir = ["down", "left", "up", "right"][rot];
+    r(x, y, W, H, p.dark);
+    let seat, back, arms;
+    if (dir === "up") { seat = [x + 3, y, W - 6, H - 6]; back = [x, y + H - 7, W, 7]; arms = [[x, y, 3, H - 6], [x + W - 3, y, 3, H - 6]]; }
+    else if (dir === "left") { seat = [x, y + 3, W - 5, H - 6]; back = [x + W - 5, y, 5, H]; arms = [[x, y, W - 5, 3], [x, y + H - 3, W - 5, 3]]; }
+    else if (dir === "right") { seat = [x + 5, y + 3, W - 5, H - 6]; back = [x, y, 5, H]; arms = [[x + 5, y, W - 5, 3], [x + 5, y + H - 3, W - 5, 3]]; }
+    else { seat = [x + 3, y + 5, W - 6, H - 5]; back = [x, y, W, 5]; arms = [[x, y + 5, 3, H - 5], [x + W - 3, y + 5, 3, H - 5]]; }
+    r(seat[0], seat[1], seat[2], seat[3], p.seat);
+    const longH = W >= H;
+    for (let i = 1; i < Math.round((longH ? W : H) / T); i++) {
+      if (longH) r(seat[0] + i * T - 1 - (seat[0] - x), seat[1], 1, seat[3], p.dark); else r(seat[0], seat[1] + i * T - 1 - (seat[1] - y), seat[2], 1, p.dark);
+    }
+    for (const a of arms) r(a[0], a[1], a[2], a[3], p.arm);
+    r(back[0], back[1], back[2], back[3], p.back);
+    if (dir === "up") r(back[0], back[1], back[2], 1, shade(p.back, 1.25)); else r(back[0], back[1], back[2], 1, shade(p.back, 1.25));
+  }
+  function bedRot(x, y, w, h, rot) {
+    const W = w * T, H = h * T;
+    r(x, y, W, H, "#7a4a2a");
+    r(x + 1, y + 1, W - 2, H - 2, "#f2ece0");
+    const head = ["W", "N", "E", "S"][rot];
+    const hz = head === "W" || head === "E";
+    const L = hz ? W : H, C = hz ? H : W;
+    // рисуем в локальных координатах (вдоль кровати u, поперёк v), потом переводим
+    const px = (u, v, du, dv, col) => {
+      let ru = head === "W" || head === "N" ? u : L - u - du;
+      let X, Y, WW, HH;
+      if (hz) { X = x + ru; Y = y + v; WW = du; HH = dv; } else { X = x + v; Y = y + ru; WW = dv; HH = du; }
+      r(X, Y, WW, HH, col);
+    };
+    px(1, 1, 4, C - 2, "#8f5b30");
+    px(1, 1, 4, 1, "#b07840");
+    const np = Math.max(1, Math.round(C / 22));
+    for (let i = 0; i < np; i++) { const v = 3 + i * Math.floor((C - 6) / np); px(6, v, 10, Math.floor((C - 6) / np) - 2, "#ffffff"); }
+    px(18, 1, L - 20, C - 2, "#e0839c");
+    px(18, 1, 4, C - 2, "#f0a9bb");
+    for (let u = 30; u < L - 4; u += 8) px(u, 1, 2, C - 2, "#cf7189");
+  }
+  function plainBox(name, x, y, w, h, rot) {
+    const [col, hh] = BODY[name];
+    const W = w * T, H = h * T;
+    if (name === "tv") { r(x + W / 2 - 2, y - 10, 4, 14 + (h - 1) * T, "#22252e"); r(x + W / 2 - 2, y - 10, 4, 1, "#3a3e4a"); return; }
+    r(x + 1, y - hh, W - 2, H + hh, col);
+    r(x + 1, y - hh, W - 2, 3, shade(col, 1.25));
+    r(x + 1, y + H - 3, W - 2, 3, shade(col, 0.78));
+    r(x + 1, y - hh, 1, H + hh, shade(col, 0.9));
+    if (rot === 2) { /* вид сзади: гладкая стенка */ }
+  }
+  const silCache = {};
+  function silhouette(name, orig, ow, oh, it) {
+    const key = name + ow + "x" + oh;
+    if (silCache[key]) return silCache[key];
+    sctx.clearRect(0, 0, scratch.width, scratch.height);
+    const saveG = g; g = sctx; orig(0, T, ow, oh, it); g = saveG;
+    const W = ow * T, H = (oh + 1) * T;
+    const img = sctx.getImageData(0, 0, W, H);
+    const col = BODY[name][0];
+    let minY = H, maxY = 0;
+    for (let i = 0; i < img.data.length; i += 4) if (img.data[i + 3] > 0) { const yy = Math.floor(i / 4 / W); if (yy < minY) minY = yy; if (yy > maxY) maxY = yy; }
+    const n = parseInt(col.slice(1), 16);
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const c2 = cv.getContext("2d");
+    const out = c2.createImageData(W, H);
+    for (let i = 0; i < img.data.length; i += 4) {
+      if (img.data[i + 3] === 0) continue;
+      const yy = Math.floor(i / 4 / W), t = (yy - minY) / Math.max(1, maxY - minY);
+      const k = t < 0.12 ? 1.25 : t > 0.85 ? 0.78 : 1;
+      out.data[i] = Math.min(255, ((n >> 16) & 255) * k); out.data[i + 1] = Math.min(255, ((n >> 8) & 255) * k); out.data[i + 2] = Math.min(255, (n & 255) * k); out.data[i + 3] = 255;
+    }
+    c2.putImageData(out, 0, 0);
+    silCache[key] = cv;
+    return cv;
+  }
   for (const name of Object.keys(SPR)) {
     const orig = SPR[name];
     SPR[name] = function (x, y, w, h, it) {
       if (!it || !it.rot) return orig(x, y, w, h, it);
-      const ow = it.ow || w, oh = it.oh || h;
+      const ow = it.ow || w, oh = it.oh || h, rot = it.rot;
+      if (SYM.includes(name)) return orig(x, y, ow, oh, it);
+      if (name === "sofa" || name === "armchair") return sofaLike(x, y, w, h, rot, FPAL[name]);
+      if (name === "bed") return bedRot(x, y, w, h, rot);
+      if (BODY[name]) {
+        if (rot === 2) { ctx.drawImage(silhouette(name, orig, ow, oh, it), x, y - T); return; }
+        return plainBox(name, x, y, w, h, rot);
+      }
+      // запасной вариант: поворот картинки
       sctx.clearRect(0, 0, scratch.width, scratch.height);
-      const saveG = g;
-      g = sctx;
-      orig(0, T, ow, oh, it);
-      g = saveG;
+      const saveG = g; g = sctx; orig(0, T, ow, oh, it); g = saveG;
       const cx = x + (w * T) / 2, cy = y + (h * T) / 2;
-      ctx.save();
-      ctx.imageSmoothingEnabled = false;
-      ctx.translate(Math.round(cx), Math.round(cy));
-      ctx.rotate((it.rot * Math.PI) / 2);
-      ctx.drawImage(scratch, -Math.round((ow * T) / 2), -Math.round(T + (oh * T) / 2));
-      ctx.restore();
+      ctx.save(); ctx.imageSmoothingEnabled = false; ctx.translate(Math.round(cx), Math.round(cy)); ctx.rotate((rot * Math.PI) / 2);
+      ctx.drawImage(scratch, -Math.round((ow * T) / 2), -Math.round(T + (oh * T) / 2)); ctx.restore();
     };
   }
 
