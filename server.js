@@ -188,10 +188,42 @@ const ZONES2 = {
   clean: [{ x: 16, y: 3, w: 3, h: 1 }]
 };
 const SPAWN2 = { caregiver: { x: 10.5, y: 3.5 }, receiver: { x: 12.5, y: 3.5 } };
+const GAMEITEMS = {
+  0: [
+    { zone: "stove", key: "stove_5_1", x: 5, y: 1, w: 1, h: 1 },
+    { zone: "bowl", key: "bowl_7_5", x: 7, y: 5, w: 1, h: 1 },
+    { zone: "table", key: "table_4_4", x: 4, y: 4, w: 2, h: 2 },
+    { zone: "bed", key: "bed_1_9", x: 1, y: 9, w: 3, h: 2 },
+    { zone: "clean", key: "bucket_17_10", x: 17, y: 10, w: 1, h: 1 },
+    { zone: "clean", key: "washer_16_12", x: 16, y: 12, w: 1, h: 1 },
+    { zone: "clean", key: "basket_17_12", x: 17, y: 12, w: 1, h: 1 }
+  ],
+  2: [
+    { zone: "stove", key: "q_stove_5_7", x: 5, y: 7, w: 1, h: 1 },
+    { zone: "bowl", key: "q_bowl_6_11", x: 6, y: 11, w: 1, h: 1 },
+    { zone: "table", key: "q_table_3_10", x: 3, y: 10, w: 2, h: 2 },
+    { zone: "bed", key: "q_bed_1_1", x: 1, y: 1, w: 3, h: 2 },
+    { zone: "clean", key: "q_bucket_16_3", x: 16, y: 3, w: 1, h: 1 },
+    { zone: "clean", key: "q_washer_17_3", x: 17, y: 3, w: 1, h: 1 },
+    { zone: "clean", key: "q_basket_18_3", x: 18, y: 3, w: 1, h: 1 }
+  ]
+};
+function zonesFor(h) {
+  const list = GAMEITEMS[h.plan === 2 ? 2 : 0];
+  const mv = h.moved || {};
+  const out = { stove: [], bowl: [], table: [], bed: [], clean: [] };
+  for (const g of list) {
+    const m = mv[g.key];
+    const x = m ? m.x : g.x, y = m ? m.y : g.y, rot = m ? m.r || 0 : 0;
+    const w = rot % 2 ? g.h : g.w, hh = rot % 2 ? g.w : g.h;
+    out[g.zone].push(g.zone === "table" ? { x: x - 1, y, w: w + 2, h: hh } : { x, y, w, h: hh });
+  }
+  return out;
+}
 let CUR = null; // дом, с которым сейчас работаем
 function near(p, zoneName) {
   const flip = CUR && CUR.plan === 1;
-  const base = CUR && CUR.plan === 2 ? ZONES2[zoneName] : ZONES[zoneName];
+  const base = CUR ? zonesFor(CUR)[zoneName] : ZONES[zoneName];
   return base.map((z) => (flip ? { x: 20 - z.x - z.w, y: z.y, w: z.w, h: z.h } : z)).some((z) => {
     const dx = Math.max(z.x - p.x, 0, p.x - (z.x + z.w));
     const dy = Math.max(z.y - p.y, 0, p.y - (z.y + z.h));
