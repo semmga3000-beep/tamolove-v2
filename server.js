@@ -293,7 +293,11 @@ function publicState(code) {
       clean: Math.round(house.clean),
       bowl: Math.round(house.bowl),
       coins: Math.round(house.coins),
-      owned: house.owned || []
+      owned: house.owned || [],
+      quests: QUESTS.map((d) => {
+        const q = qState(house);
+        return { id: d.id, n: d.n, p: Math.min(d.t, q.p[d.id] || 0), t: d.t, r: d.r, d: !!q.done[d.id] };
+      })
     }
   };
 }
@@ -327,6 +331,31 @@ function attach(ws, code, role) {
 }
 
 // ---------- Действия ----------
+const QUESTS = [
+  { id: "eat", n: "Съесть 5 порций 🍽️", t: 5, r: 5 },
+  { id: "cook", n: "Приготовить 3 блюда 🍳", t: 3, r: 4 },
+  { id: "clean", n: "Убраться 2 раза 🧹", t: 2, r: 3 }
+];
+function today() {
+  return new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
+}
+function qState(house) {
+  if (!house.quests || house.quests.day !== today()) house.quests = { day: today(), p: {}, done: {} };
+  return house.quests;
+}
+function qAdd(house, id, n) {
+  const q = qState(house);
+  const d = QUESTS.find((x) => x.id === id);
+  if (!d || q.done[id]) return "";
+  q.p[id] = (q.p[id] || 0) + n;
+  if (q.p[id] >= d.t) {
+    q.done[id] = true;
+    house.coins += d.r;
+    return " 🎯 Задание выполнено! +" + d.r + " 🪙";
+  }
+  return "";
+}
+
 function doAction(house, role) {
   const p = house.players[role];
   const other = house.players[role === "caregiver" ? "receiver" : "caregiver"];
@@ -350,14 +379,14 @@ function doAction(house, role) {
       p.satiety = clamp(p.satiety + FOOD_FEED[p.tier] + 10);
       p.mood = clamp(p.mood + FOOD_MOOD[p.tier] + 2);
       p.carrying = false;
-      return "Приятного аппетита! 🍽️";
+      return "Приятного аппетита! 🍽️" + qAdd(house, "eat", 1);
     }
     if (p.carrying && other && dist(p, other) < 1.8) {
       other.satiety = clamp(other.satiety + FOOD_FEED[p.tier]);
       other.mood = clamp(other.mood + FOOD_MOOD[p.tier] + 3);
       p.mood = clamp(p.mood + 3);
       p.carrying = false;
-      return "Накормлено! ❤️";
+      return "Накормлено! ❤️" + qAdd(house, "eat", 1);
     }
   }
 
@@ -366,7 +395,7 @@ function doAction(house, role) {
     house.bowl = clamp(house.bowl - 25);
     p.satiety = clamp(p.satiety + 25);
     p.mood = clamp(p.mood + 3);
-    return "Ням-ням! 😋";
+    return "Ням-ням! 😋" + qAdd(house, "eat", 1);
   }
 
   if (near(p, "bed")) {
@@ -396,7 +425,7 @@ function doCook(house, role, score) {
   p.carrying = true;
   p.tier = tier;
   house.coins += COOK_COINS[tier];
-  return COOK_TEXT[tier] + " +" + COOK_COINS[tier] + " 🪙";
+  return COOK_TEXT[tier] + " +" + COOK_COINS[tier] + " 🪙" + qAdd(house, "cook", 1);
 }
 
 // Уборка: игрок оттёр пятна (0-8)
@@ -410,7 +439,7 @@ function doClean(house, role, spots) {
   const coins = n >= 6 ? 2 : n >= 3 ? 1 : 0;
   house.coins += coins;
   if (n >= 3) p.mood = clamp(p.mood + 1);
-  return (n >= 6 ? "Блестит! ✨" : "Стало чище ✨") + (coins ? " +" + coins + " 🪙" : "");
+  return (n >= 6 ? "Блестит! ✨" : "Стало чище ✨") + (coins ? " +" + coins + " 🪙" : "") + (n >= 3 ? qAdd(house, "clean", 1) : "");
 }
 
 // ---------- Время идёт ----------
@@ -557,8 +586,9 @@ wss.on("connection", (ws) => {
       p.mood = clamp(p.mood + FOOD_MOOD[p.tier] + 6);
       rec.mood = clamp(rec.mood + FOOD_MOOD[p.tier] + 6);
       p.carrying = false;
-      send(ws, { type: "toast", text: "Едите вместе! Вдвоём вкуснее ❤️🍽️" });
-      if (rsock) send(rsock, { type: "toast", text: "Вы едите вместе! Вдвоём вкуснее ❤️🍽️" });
+      const qt = qAdd(house, "eat", 2);
+      send(ws, { type: "toast", text: "Едите вместе! Вдвоём вкуснее ❤️🍽️" + qt });
+      if (rsock) send(rsock, { type: "toast", text: "Вы едите вместе! Вдвоём вкуснее ❤️🍽️" + qt });
       markDirty(code, false);
       broadcast(code);
       return;
