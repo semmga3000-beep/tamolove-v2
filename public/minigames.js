@@ -382,6 +382,7 @@
     { id: "lamp3", n: "Лампа на кухне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 6 }, it2: { x: 1, y: 8 } },
     { id: "shelf", n: "Книжный шкаф в спальне", e: "📚", c: 8, it: { t: "bookshelf", x: 2, y: 8, w: 2 }, it2: { x: 12, y: 1, w: 2 } },
     { id: "aqua", n: "Аквариум", e: "🐠", c: 12, it: { t: "aquarium", x: 14, y: 8, w: 2 }, it2: { x: 15, y: 5, w: 2 } },
+    { id: "shower", n: "Душевая кабина", e: "🚿", c: 10, it: { t: "shower", x: 16, y: 8 }, it2: { x: 16, y: 4 } },
     { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 14, y: 1, w: 2, solid: false }, it2: { x: 10, y: 1, w: 2, solid: false } }
   ];
   SPR.armchair = (x, y) => {
@@ -408,6 +409,18 @@
     r(x + W - 10, y + 5, 3, 2, "#ffd24d");
     r(x + 3, y + 5, 1, 3, "#3f9f5a");
   };
+  SPR.shower = (x, y) => {
+    r(x + 1, y - 14, 14, 30, "#8fb0c4");
+    r(x + 2, y - 13, 12, 27, "#d8f0fa");
+    r(x + 2, y - 13, 12, 3, "#b9d4e0");
+    r(x + 8, y - 10, 1, 4, "#9aa6ae");
+    r(x + 5, y - 7, 7, 2, "#9aa6ae");
+    r(x + 6, y - 4, 1, 2, "#7fc4e8");
+    r(x + 9, y - 3, 1, 2, "#7fc4e8");
+    r(x + 7, y + 1, 1, 2, "#7fc4e8");
+    r(x + 2, y + 12, 12, 3, "#f4f4f8");
+    r(x + 7, y + 13, 2, 1, "#9aa6ae");
+  };
   SPR.tvstand = (x, y, w) => {
     const W = w * 16;
     r(x, y + 4, W, 12, "#6b4a2c");
@@ -429,6 +442,33 @@
     if (i.t === "nightstand" && i.x === 4 && i.y === 9 && !i.sid) { i.x = 1; i.y = 8; }
     else if (i.t === "fireplace") i.x = 16;
   }
+
+  // ---------- Обои и пол ----------
+  const WALLS = [["w_pink", "Розовые обои", "#f6cfdc", "#eab8ca"], ["w_mint", "Мятные обои", "#cfeadd", "#b6dccb"], ["w_lav", "Сиреневые обои", "#ddd0f0", "#cbb9e6"], ["w_sun", "Солнечные обои", "#fbe9a8", "#f2d98a"], ["w_blue", "Голубые обои", "#cfe0f5", "#b9d0ee"]];
+  const FLOORS = [["f_light", "Светлый паркет", "wood", "#e3c299", "#cfa878", "#efd2ac"], ["f_dark", "Тёмный паркет", "wood", "#8a5a3a", "#6e4529", "#9d6b46"], ["f_gray", "Серая плитка", "tile", "#d9d9df", "#cdcdd5", "#b8b8c2"], ["f_pink", "Розовая плитка", "tile", "#f6d4de", "#efc3d0", "#dfa8b8"]];
+  let paint = { wall: null, floor: null };
+  const origWall = wallpaperFor;
+  wallpaperFor = function (tx, ty) {
+    const w = WALLS.find((x) => x[0] === paint.wall);
+    return w ? [w[2], w[3]] : origWall(tx, ty);
+  };
+  const origFloor = drawFloorTile;
+  drawFloorTile = function (tx, ty, c) {
+    const f = FLOORS.find((x) => x[0] === paint.floor);
+    if (!f || c === "d") return origFloor(tx, ty, c);
+    const x = tx * T, y = ty * T;
+    if (f[2] === "tile") {
+      r(x, y, T, T, (tx + ty) % 2 === 0 ? f[3] : f[4]);
+      r(x, y + 7, T, 1, f[5]); r(x, y + 15, T, 1, f[5]); r(x + 7, y, 1, T, f[5]); r(x + 15, y, 1, T, f[5]);
+    } else {
+      r(x, y, T, T, f[3]);
+      r(x, y, T, 1, f[4]); r(x, y + 8, T, 1, f[4]);
+      r(x, y + 1, T, 1, f[5]); r(x, y + 9, T, 1, f[5]);
+      r(x + ((tx * 5 + ty * 3) % 14) + 1, y + 1, 1, 7, f[4]);
+      r(x + ((tx * 3 + ty * 7 + 5) % 14) + 1, y + 9, 1, 7, f[4]);
+    }
+  };
+  const paintKey = () => paint.wall + "|" + paint.floor;
   let owned = [];
   let coinsNow = 0;
   const shop = document.createElement("div");
@@ -452,6 +492,30 @@
       row.appendChild(b);
       box.appendChild(row);
     }
+    const hd = document.createElement("div");
+    hd.innerHTML = "<b>🎨 Обои и пол</b>";
+    hd.style.margin = "12px 0 4px";
+    box.appendChild(hd);
+    const addPaint = (list, kind) => {
+      const cur = kind === "wall" ? paint.wall : paint.floor;
+      const reset = document.createElement("button");
+      reset.textContent = (cur ? "" : "✓ ") + (kind === "wall" ? "Обои как были" : "Пол как был");
+      reset.style.cssText = "margin:3px;border:none;border-radius:10px;background:#b79bd1;color:#fff;font-size:13px;padding:7px 9px";
+      reset.onclick = () => sendMsg({ type: "paint", [kind]: null });
+      box.appendChild(reset);
+      for (const p of list) {
+        const has = owned.includes(p[0]);
+        const b = document.createElement("button");
+        const on = cur === p[0];
+        b.textContent = p[1] + (on ? " ✓" : has ? "" : " 🪙 5");
+        b.style.cssText = "margin:3px;border:none;border-radius:10px;color:#fff;font-size:13px;padding:7px 9px;background:" + (on ? "#9bc59b" : has ? "#ff6f91" : coinsNow >= 5 ? "#ff9f5a" : "#c9b0b8");
+        b.onclick = () => { if (has) sendMsg({ type: "paint", [kind]: p[0] }); else sendMsg({ type: "buy", id: p[0] }); };
+        box.appendChild(b);
+      }
+    };
+    addPaint(WALLS, "wall");
+    box.appendChild(document.createElement("br"));
+    addPaint(FLOORS, "floor");
   }
   function syncOwned() {
     LAYOUT.items = LAYOUT.items.filter((i) => !i.sid);
@@ -474,6 +538,11 @@
     if (msg && msg.type === "state" && msg.house) {
       if (Array.isArray(msg.house.owned)) { owned = msg.house.owned; syncOwned(); }
       if (typeof msg.house.coins === "number") coinsNow = msg.house.coins;
+      if (msg.house.paint) {
+        const before = paintKey();
+        paint = { wall: msg.house.paint.wall || null, floor: msg.house.paint.floor || null };
+        if (paintKey() !== before) buildBackground();
+      }
       if (shop.style.display === "flex") renderShop();
     }
   };
@@ -820,17 +889,17 @@
       "###d####llllll#cccc#",
       "#kkkkkk#llllll#cccc#",
       "#kkkkkk#llllll#cccc#",
-      "#kkkkkkdllllll#cccc#",
-      "#kkkkkk#llllll#cccc#",
-      "#kkkkkk#llllll#cccc#",
-      "#kkkkkk#llllll#cccc#",
+      "#kkkkkkdllllll######",
+      "#kkkkkk#llllll######",
+      "#kkkkkk#############",
+      "#kkkkkk#############",
       "####################"
     ],
     rugs: [
       { x: 2, y: 3, w: 4, h: 2, border: "#cdb0df", body: "#a98ac6", inner: "#b79bd1" },
       { x: 2, y: 9, w: 4, h: 4, border: "#3f6b3f", body: "#4f8a4f", inner: "#5b9a58" },
       { x: 8, y: 3, w: 6, h: 5, border: "#e0bf8a", body: "#a23f3f", inner: "#b04a48" },
-      { x: 15, y: 7, w: 4, h: 3, border: "#a3c7da", body: "#7fb0c9", inner: "#8dbcd3" }
+      { x: 15, y: 6, w: 4, h: 2, border: "#a3c7da", body: "#7fb0c9", inner: "#8dbcd3" }
     ],
     decor: [
       { t: "window", x: 2, y: 0, w: 2 },
@@ -857,10 +926,10 @@
       { t: "bowl", x: 6, y: 11, solid: false }, { t: "plant", x: 6, y: 12 },
       { t: "bookshelf", x: 8, y: 1, w: 2 }, { t: "lamp", x: 13, y: 5 },
       { t: "coffeetable", x: 10, y: 5, w: 2 }, { t: "sofa", x: 9, y: 8, w: 4 },
-      { t: "plant", x: 8, y: 12 }, { t: "plant", x: 13, y: 12 },
+      { t: "plant", x: 8, y: 10 }, { t: "plant", x: 13, y: 10 },
       { t: "cabinet", x: 15, y: 1, w: 2 }, { t: "plant", x: 18, y: 1 },
       { t: "bucket", x: 16, y: 3 }, { t: "washer", x: 17, y: 3 }, { t: "basket", x: 18, y: 3 },
-      { t: "plant", x: 15, y: 12 }, { t: "plant", x: 18, y: 12 }
+      { t: "shower", x: 18, y: 5 }, { t: "plant", x: 15, y: 8 }, { t: "plant", x: 18, y: 8 }
     ].map((i) => { i.w = i.w || 1; i.h = i.h || 1; if (i.solid === undefined) i.solid = true; i.k = i.t + "_" + i.x + "_" + i.y; return i; })
   };
   const keyOf = (k) => (curPlan === 2 ? "q_" + k : k);
@@ -1016,7 +1085,12 @@
   function canonRot(it) { return curPlan === 1 ? (4 - (it.rot || 0)) % 4 : it.rot || 0; }
   function nudge(dx, dy) {
     const it = sel && itemByKey(sel);
-    if (it) setPose(it.x + dx, it.y + dy, canonRot(it), it.w, it.h);
+    if (!it) return;
+    for (let d = 1; d <= 3; d++) {
+      const nx = it.x + dx * d, ny = it.y + dy * d;
+      if (canPlace(it, nx, ny, it.w, it.h)) { setPose(nx, ny, canonRot(it), it.w, it.h); return; }
+    }
+    showToast("Сюда нельзя 🚫");
   }
   function rotate() {
     const it = sel && itemByKey(sel);
@@ -1080,6 +1154,22 @@
     menu.appendChild(b);
   }
   if (top) top.appendChild(menuBtn);
+
+
+  // ---------- Игра открыта в другом окне ----------
+  const prevH8 = handleMessage;
+  handleMessage = function (msg) {
+    if (msg && msg.type === "kicked") {
+      try { ws.onclose = () => {}; ws.close(); } catch (e) {}
+      const k = document.createElement("div");
+      k.style.cssText = "position:fixed;inset:0;background:#ffe4ec;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px";
+      k.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:18px;max-width:340px;text-align:center;color:#6b2d45"><div style="font-size:40px">🪟</div><b style="font-size:17px">Игра открыта в другом окне</b><p style="font-size:14px">Закрой лишние окна или вкладки с игрой. Если хочешь играть здесь, нажми кнопку.</p><button id="kBtn" style="width:100%;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:17px;padding:12px">Играть здесь</button></div>';
+      document.body.appendChild(k);
+      document.getElementById("kBtn").onclick = () => location.reload();
+      return;
+    }
+    prevH8(msg);
+  };
 
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
