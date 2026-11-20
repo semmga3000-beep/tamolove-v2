@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const https = require("https");
 const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
@@ -325,6 +326,7 @@ function publicState(code) {
         mood: Math.round(p.mood),
         carrying: p.carrying,
         look: p.look || null,
+        notify: p.notify !== false,
         seen: p.seen || 0
       };
     }
@@ -364,6 +366,31 @@ function send(ws, obj) {
   if (ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
 
+// ---------- Уведомления в Telegram (нужен BOT_TOKEN в настройках Render) ----------
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
+function tgSend(chatId, text) {
+  if (!BOT_TOKEN) return;
+  const body = JSON.stringify({ chat_id: chatId, text, reply_markup: { inline_keyboard: [[{ text: "Открыть дом 🏠", url: "https://t.me/TamoLoveGameBot" }]] } });
+  try {
+    const req = https.request({ hostname: "api.telegram.org", path: "/bot" + BOT_TOKEN + "/sendMessage", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } }, (res) => res.resume());
+    req.on("error", () => {});
+    req.setTimeout(8000, () => req.destroy());
+    req.write(body);
+    req.end();
+  } catch (e) {}
+}
+function notifyOffline(code, role, kind, text, cooldownMs) {
+  const house = houses[code];
+  const p = house && house.players[role];
+  if (!p || !p.id || !/^tg\d+$/.test(String(p.id)) || p.notify === false) return;
+  if (live[code] && live[code][role]) return;
+  if (!house.notif) house.notif = {};
+  const key = role + "_" + kind;
+  if (house.notif[key] && Date.now() - house.notif[key] < cooldownMs) return;
+  house.notif[key] = Date.now();
+  tgSend(String(p.id).slice(2), text);
+}
+
 function attach(ws, code, role) {
   if (!anyLive(code)) catchUp(houses[code]);
   if (!live[code]) live[code] = {};
@@ -377,6 +404,10 @@ function attach(ws, code, role) {
   ws.house = code;
   ws.role = role;
   if (houses[code]) touchStreak(houses[code]);
+  if (houses[code] && houses[code].players[role]) {
+    const other = role === "caregiver" ? "receiver" : "caregiver";
+    notifyOffline(code, other, "enter", houses[code].players[role].name + " зашёл(а) в дом 💞 Загляни!", 45 * 60 * 1000);
+  }
   send(ws, { type: "joined", code, role });
   broadcast(code);
 }
@@ -600,6 +631,9 @@ setInterval(() => {
       p.satiety = clamp(p.satiety - RATE.satiety * f);
       p.energy = clamp(p.energy - RATE.energy * f);
 
+      if (!online && (p.satiety < 25 || p.energy < 25)) {
+        notifyOffline(code, role, "low", (p.satiety < 25 ? "🍖 " + p.name + " проголодался(лась)" : "⚡ " + p.name + " устал(а)") + ". Загляни в дом и позаботься!", 6 * 3600 * 1000);
+      }
       const low = p.satiety < 30 || p.energy < 30 || house.clean < 30;
       const good = p.satiety > 50 && p.energy > 50 && house.clean > 50;
       if (low) p.mood = clamp(p.mood - 0.06 * MOOD_SCALE * f);
@@ -635,6 +669,17 @@ wss.on("connection", (ws) => {
         if (!CUR.moved) CUR.moved = {};
         CUR.moved[id] = { x, y, r: Math.max(0, Math.min(3, Math.floor(Number(msg.r) || 0))) };
       }
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "notif") {
+      if (!CUR) return;
+      const me = CUR.players[ws.role];
+      if (!me) return;
+      me.notify = !!msg.on;
+      send(ws, { type: "toast", text: me.notify ? "Уведомления включены 🔔" : "Уведомления выключены 🔕" });
       markDirty(ws.house, true);
       broadcast(ws.house);
       return;
