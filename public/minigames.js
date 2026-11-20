@@ -377,8 +377,36 @@
     { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 5, y: 8 } },
     { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 1, y: 11 } },
     { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 14, y: 1, w: 2 } },
+    { id: "arm", n: "Кресло", e: "🛋️", c: 7, it: { t: "armchair", x: 11, y: 5 } },
+    { id: "pouf", n: "Пуф на кухне", e: "🟣", c: 4, it: { t: "pouf", x: 9, y: 4 } },
+    { id: "lamp3", n: "Лампа на кухне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 6 } },
+    { id: "shelf", n: "Книжный шкаф в спальне", e: "📚", c: 8, it: { t: "bookshelf", x: 2, y: 12, w: 2 } },
+    { id: "aqua", n: "Аквариум", e: "🐠", c: 12, it: { t: "aquarium", x: 14, y: 8, w: 2 } },
     { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 14, y: 1, w: 2, solid: false } }
   ];
+  SPR.armchair = (x, y) => {
+    r(x + 1, y + 2, 14, 13, "#8a5a8f");
+    r(x + 1, y + 2, 14, 4, "#a577aa");
+    r(x + 3, y + 7, 10, 6, "#b88fbd");
+    r(x, y + 6, 3, 9, "#76497b");
+    r(x + 13, y + 6, 3, 9, "#76497b");
+  };
+  SPR.pouf = (x, y) => {
+    r(x + 2, y + 5, 12, 10, "#9b6fc0");
+    r(x + 2, y + 5, 12, 3, "#b88ad8");
+    r(x + 3, y + 14, 10, 1, "#6e4a8f");
+  };
+  SPR.aquarium = (x, y, w) => {
+    const W = w * 16;
+    r(x + 1, y - 6, W - 2, 21, "#2f5f7f");
+    r(x + 2, y - 5, W - 4, 17, "#6fc4e8");
+    r(x + 2, y + 6, W - 4, 6, "#e8d49a");
+    r(x + 6, y - 1, 4, 2, "#ff9f5a");
+    r(x + 10, y, 2, 1, "#ff9f5a");
+    r(x + W - 12, y + 3, 4, 2, "#ffd24d");
+    r(x + 4, y + 8, 2, 3, "#3f9f5a");
+    r(x, y + 12, W, 4, "#5a3d25");
+  };
   SPR.tvstand = (x, y, w) => {
     const W = w * 16;
     r(x, y + 4, W, 12, "#6b4a2c");
@@ -425,10 +453,12 @@
     }
   }
   function syncOwned() {
+    LAYOUT.items = LAYOUT.items.filter((i) => !i.sid);
     for (const c of CATALOG) {
-      if (owned.includes(c.id) && !LAYOUT.items.some((i) => i.sid === c.id)) {
-        LAYOUT.items.push(Object.assign({ w: 1, h: 1, solid: true, sid: c.id }, c.it));
-      }
+      if (!owned.includes(c.id)) continue;
+      const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id }, c.it);
+      if (typeof curPlan !== "undefined" && curPlan === 1) it.x = 20 - it.x - it.w;
+      LAYOUT.items.push(it);
     }
   }
   const shopBtn = document.createElement("button");
@@ -770,6 +800,54 @@
       dClose.style.display = "inline-block";
     }
   };
+
+
+  // ---------- Планировка дома (зеркальная) и меню ----------
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const SNAP = { map: clone(LAYOUT.map), rugs: clone(LAYOUT.rugs), decor: clone(LAYOUT.decor), zones: clone(ZONES), spawn: clone(LAYOUT.spawn), items: LAYOUT.items.filter((i) => !i.sid).map(clone) };
+  let curPlan = null;
+  const mx = (o) => Object.assign({}, o, { x: 20 - o.x - (o.w || 1) });
+  function applyPlan(n, mirrorMe) {
+    const f = n === 1;
+    LAYOUT.map = f ? SNAP.map.map((row) => row.split("").reverse().join("")) : clone(SNAP.map);
+    LAYOUT.rugs = f ? SNAP.rugs.map(mx) : clone(SNAP.rugs);
+    LAYOUT.decor = f ? SNAP.decor.map(mx) : clone(SNAP.decor);
+    LAYOUT.items = (f ? SNAP.items.map((i) => { const m = mx(i); if (m.dir === "left") m.dir = "right"; else if (m.dir === "right") m.dir = "left"; return m; }) : clone(SNAP.items));
+    LAYOUT.spawn = f ? { caregiver: { x: 20 - SNAP.spawn.caregiver.x, y: SNAP.spawn.caregiver.y }, receiver: { x: 20 - SNAP.spawn.receiver.x, y: SNAP.spawn.receiver.y } } : clone(SNAP.spawn);
+    for (const k of Object.keys(ZONES)) delete ZONES[k];
+    for (const k of Object.keys(SNAP.zones)) ZONES[k] = f ? SNAP.zones[k].map(mx) : clone(SNAP.zones[k]);
+    if (mirrorMe) player.x = 20 - player.x;
+    curPlan = n;
+    syncOwned();
+    buildBackground();
+  }
+  const planBtn = document.createElement("button");
+  planBtn.textContent = "🏠 План дома";
+  planBtn.onclick = () => sendMsg({ type: "set_plan", plan: curPlan === 1 ? 0 : 1 });
+  const prevH7 = handleMessage;
+  handleMessage = function (msg) {
+    if (msg && msg.type === "state" && msg.house && typeof msg.house.plan === "number" && msg.house.plan !== curPlan) {
+      applyPlan(msg.house.plan, curPlan !== null);
+    }
+    prevH7(msg);
+  };
+  // меню: прячем лишние кнопки
+  const menu = document.createElement("div");
+  menu.style.cssText = "position:fixed;top:44px;right:8px;background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:8px;display:none;flex-direction:column;gap:6px;z-index:25;min-width:170px";
+  document.body.appendChild(menu);
+  const menuBtn = document.createElement("button");
+  menuBtn.textContent = "☰ Меню";
+  menuBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#6b2d45;color:#fff;font-size:13px;padding:4px 10px";
+  menuBtn.onclick = () => { menu.style.display = menu.style.display === "flex" ? "none" : "flex"; };
+  for (const b of [document.getElementById("inviteBtn"), shopBtn, qBtn, dBtn, planBtn, document.getElementById("themeBtn")]) {
+    if (!b) continue;
+    b.style.margin = "0";
+    b.style.fontSize = "15px";
+    b.style.padding = "9px 12px";
+    b.addEventListener("click", () => { menu.style.display = "none"; });
+    menu.appendChild(b);
+  }
+  if (top) top.appendChild(menuBtn);
 
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
