@@ -280,7 +280,8 @@ function publicState(code) {
         energy: Math.round(p.energy),
         mood: Math.round(p.mood),
         carrying: p.carrying,
-        look: p.look || null
+        look: p.look || null,
+        seen: p.seen || 0
       };
     }
   }
@@ -628,6 +629,8 @@ wss.on("connection", (ws) => {
       delete live[code][ws.role];
       if (houses[code]) {
         if (!anyLive(code)) houses[code].lastSeen = Date.now();
+        const pl = houses[code].players[ws.role];
+        if (pl) pl.seen = Date.now();
         markDirty(code, true);
       }
       broadcast(code);
