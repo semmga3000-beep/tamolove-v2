@@ -180,10 +180,19 @@ function clamp(v) {
   return Math.max(0, Math.min(100, v));
 }
 
+const ZONES2 = {
+  stove: [{ x: 5, y: 7, w: 1, h: 1 }],
+  bowl: [{ x: 6, y: 11, w: 1, h: 1 }],
+  table: [{ x: 2, y: 10, w: 4, h: 2 }],
+  bed: [{ x: 1, y: 1, w: 3, h: 2 }],
+  clean: [{ x: 16, y: 3, w: 3, h: 1 }]
+};
+const SPAWN2 = { caregiver: { x: 10.5, y: 3.5 }, receiver: { x: 12.5, y: 3.5 } };
 let CUR = null; // дом, с которым сейчас работаем
 function near(p, zoneName) {
   const flip = CUR && CUR.plan === 1;
-  return ZONES[zoneName].map((z) => (flip ? { x: 20 - z.x - z.w, y: z.y, w: z.w, h: z.h } : z)).some((z) => {
+  const base = CUR && CUR.plan === 2 ? ZONES2[zoneName] : ZONES[zoneName];
+  return base.map((z) => (flip ? { x: 20 - z.x - z.w, y: z.y, w: z.w, h: z.h } : z)).some((z) => {
     const dx = Math.max(z.x - p.x, 0, p.x - (z.x + z.w));
     const dy = Math.max(z.y - p.y, 0, p.y - (z.y + z.h));
     return Math.hypot(dx, dy) <= REACH;
@@ -543,12 +552,16 @@ wss.on("connection", (ws) => {
 
     if (msg.type === "set_plan") {
       if (!CUR) return;
-      const np = msg.plan === 1 ? 1 : 0;
-      if ((CUR.plan || 0) === np) return;
+      const np = [0, 1, 2].includes(msg.plan) ? msg.plan : 0;
+      const op = CUR.plan || 0;
+      if (op === np) return;
       CUR.plan = np;
       for (const rl of ROLES) {
         const pp = CUR.players[rl];
-        if (pp) pp.x = 20 - pp.x;
+        if (!pp) continue;
+        if (np === 2) { pp.x = SPAWN2[rl].x; pp.y = SPAWN2[rl].y; }
+        else if (op === 2) { pp.x = np === 1 ? 20 - SPAWN[rl].x : SPAWN[rl].x; pp.y = SPAWN[rl].y; }
+        else pp.x = 20 - pp.x;
       }
       for (const rl of ROLES) if (live[ws.house] && live[ws.house][rl]) send(live[ws.house][rl], { type: "toast", text: "Дом перестроен! 🏠✨" });
       markDirty(ws.house, true);
