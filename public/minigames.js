@@ -458,9 +458,7 @@
     for (const c of CATALOG) {
       if (!owned.includes(c.id)) continue;
       const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id, k: c.id }, c.it);
-      const mv = moved[c.id === "tv" ? "tvs" : c.id];
-      if (mv) { it.x = mv.x; it.y = mv.y; }
-      if (typeof curPlan !== "undefined" && curPlan === 1) it.x = 20 - it.x - it.w;
+      pose(it, moved[c.id === "tv" ? "tvs" : c.id]);
       LAYOUT.items.push(it);
     }
   }
@@ -810,6 +808,18 @@
   const SNAP = { map: clone(LAYOUT.map), rugs: clone(LAYOUT.rugs), decor: clone(LAYOUT.decor), zones: clone(ZONES), spawn: clone(LAYOUT.spawn), items: LAYOUT.items.filter((i) => !i.sid).map((i) => { const c = clone(i); c.k = i.t + "_" + i.x + "_" + i.y; return c; }) };
   let moved = {};
   let curPlan = null;
+  // применяем сохранённое положение (x, y, r) к предмету
+  function pose(it, m) {
+    const ow = it.ow || it.w, oh = it.oh || it.h;
+    it.ow = ow; it.oh = oh;
+    const r0 = m && m.r ? m.r : 0;
+    if (m) { it.x = m.x; it.y = m.y; }
+    it.w = r0 % 2 ? oh : ow;
+    it.h = r0 % 2 ? ow : oh;
+    it.rot = r0;
+    if (curPlan === 1) { it.x = 20 - it.x - it.w; it.rot = (4 - r0) % 4; }
+    return it;
+  }
   const mx = (o) => Object.assign({}, o, { x: 20 - o.x - (o.w || 1) });
   function applyPlan(n, mirrorMe) {
     const f = n === 1;
@@ -818,8 +828,9 @@
     LAYOUT.decor = f ? SNAP.decor.map(mx) : clone(SNAP.decor);
     LAYOUT.items = SNAP.items.map((i) => {
       const c = clone(i);
-      if (moved[c.k]) { c.x = moved[c.k].x; c.y = moved[c.k].y; }
-      if (f) { c.x = 20 - c.x - c.w; if (c.dir === "left") c.dir = "right"; else if (c.dir === "right") c.dir = "left"; }
+      curPlan = n;
+      pose(c, moved[c.k]);
+      if (f) { if (c.dir === "left") c.dir = "right"; else if (c.dir === "right") c.dir = "left"; }
       return c;
     });
     LAYOUT.spawn = f ? { caregiver: { x: 20 - SNAP.spawn.caregiver.x, y: SNAP.spawn.caregiver.y }, receiver: { x: 20 - SNAP.spawn.receiver.x, y: SNAP.spawn.receiver.y } } : clone(SNAP.spawn);
@@ -848,6 +859,31 @@
     prevH7(msg);
   };
 
+
+  // поворот мебели: рисуем предмет во временный холст и поворачиваем
+  const scratch = document.createElement("canvas");
+  scratch.width = 10 * T; scratch.height = 9 * T;
+  const sctx = scratch.getContext("2d");
+  for (const name of Object.keys(SPR)) {
+    const orig = SPR[name];
+    SPR[name] = function (x, y, w, h, it) {
+      if (!it || !it.rot) return orig(x, y, w, h, it);
+      const ow = it.ow || w, oh = it.oh || h;
+      sctx.clearRect(0, 0, scratch.width, scratch.height);
+      const saveG = g;
+      g = sctx;
+      orig(0, T, ow, oh, it);
+      g = saveG;
+      const cx = x + (w * T) / 2, cy = y + (h * T) / 2;
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.translate(Math.round(cx), Math.round(cy));
+      ctx.rotate((it.rot * Math.PI) / 2);
+      ctx.drawImage(scratch, -Math.round((ow * T) / 2), -Math.round(T + (oh * T) / 2));
+      ctx.restore();
+    };
+  }
+
   // ---------- Двигать мебель ----------
   const LOCK = ["stove", "bowl", "table", "chair", "bed", "bucket", "washer", "basket"];
   const TALL = ["bookshelf", "fireplace", "tv"];
@@ -857,7 +893,7 @@
   document.body.appendChild(hi);
   const ep = document.createElement("div");
   ep.style.cssText = "position:fixed;left:0;right:0;bottom:0;background:#fff8f0;border-top:3px solid #6b2d45;border-radius:16px 16px 0 0;padding:10px 12px 14px;display:none;z-index:35;text-align:center;font-size:14px";
-  ep.innerHTML = '<div id="eHint" style="margin-bottom:6px"></div><div id="eArr" style="display:inline-grid;grid-template-columns:repeat(3,54px);gap:5px"></div><div style="margin-top:8px"><button id="eDone" style="border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:15px;padding:9px 18px;margin:3px">Готово ✅</button><button id="eReset" style="border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:13px;padding:9px 12px;margin:3px">Всё как было</button></div>';
+  ep.innerHTML = '<div id="eHint" style="margin-bottom:6px"></div><div id="eArr" style="display:inline-grid;grid-template-columns:repeat(3,54px);gap:5px"></div><div style="margin-top:8px"><button id="eDone" style="border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:15px;padding:9px 18px;margin:3px">Готово ✅</button><button id="eRot" style="border:none;border-radius:12px;background:#6fa8ff;color:#fff;font-size:15px;padding:9px 14px;margin:3px">🔄 Повернуть</button><button id="eReset" style="border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:13px;padding:9px 12px;margin:3px">Всё как было</button></div>';
   document.body.appendChild(ep);
   const eArr = ep.querySelector("#eArr"), eHint = ep.querySelector("#eHint");
   function itemByKey(k) { return LAYOUT.items.find((i) => i.k === k); }
@@ -866,38 +902,50 @@
     if (!editOn || !it) { hi.style.display = "none"; return; }
     const rc = canvas.getBoundingClientRect();
     const sc = rc.width / canvas.width;
-    const top0 = TALL.includes(it.t) ? it.y - 1 : it.y;
+    const top0 = TALL.includes(it.t) && !it.rot ? it.y - 1 : it.y;
     hi.style.left = rc.left + it.x * T * sc + "px";
     hi.style.top = rc.top + top0 * T * sc + "px";
     hi.style.width = it.w * T * sc + "px";
     hi.style.height = (it.y + it.h - top0) * T * sc + "px";
     hi.style.display = "block";
   }
-  function canPlace(it, nx, ny) {
-    for (let tx = nx; tx < nx + it.w; tx++) for (let ty = ny; ty < ny + it.h; ty++) {
+  function canPlace(it, nx, ny, nw, nh) {
+    nw = nw || it.w; nh = nh || it.h;
+    for (let tx = nx; tx < nx + nw; tx++) for (let ty = ny; ty < ny + nh; ty++) {
       if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
       const c = tileAt(tx, ty);
       if (c === "#" || c === "d") return false;
     }
     if (it.solid) {
       const ov = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-      const me = { x: nx, y: ny, w: it.w, h: it.h };
+      const me = { x: nx, y: ny, w: nw, h: nh };
       for (const o of LAYOUT.items) if (o !== it && o.solid && ov(me, o)) return false;
       for (const pl of [player, partner]) if (pl && ov(me, { x: Math.floor(pl.x), y: Math.floor(pl.y), w: 1, h: 1 })) return false;
     }
     return true;
   }
-  function nudge(dx, dy) {
+  function setPose(nx, ny, nr, nw, nh) {
     const it = sel && itemByKey(sel);
     if (!it) return;
-    const nx = it.x + dx, ny = it.y + dy;
-    if (!canPlace(it, nx, ny)) { showToast("Сюда нельзя 🚫"); return; }
+    if (!canPlace(it, nx, ny, nw, nh)) { showToast("Сюда нельзя 🚫"); return; }
     const key = sel === "tv" ? "tvs" : sel;
-    const cx = curPlan === 1 ? 20 - nx - it.w : nx;
-    moved[key] = { x: cx, y: ny };
+    const cx = curPlan === 1 ? 20 - nx - nw : nx;
+    moved[key] = { x: cx, y: ny, r: nr };
     applyPlan(curPlan, false);
     posHi();
-    sendMsg({ type: "move_item", id: key, x: cx, y: ny });
+    sendMsg({ type: "move_item", id: key, x: cx, y: ny, r: nr });
+  }
+  function canonRot(it) { return curPlan === 1 ? (4 - (it.rot || 0)) % 4 : it.rot || 0; }
+  function nudge(dx, dy) {
+    const it = sel && itemByKey(sel);
+    if (it) setPose(it.x + dx, it.y + dy, canonRot(it), it.w, it.h);
+  }
+  function rotate() {
+    const it = sel && itemByKey(sel);
+    if (!it) return;
+    const nr = (canonRot(it) + 1) % 4;
+    const ow = it.ow || it.w, oh = it.oh || it.h;
+    setPose(it.x, it.y, nr, nr % 2 ? oh : ow, nr % 2 ? ow : oh);
   }
   [["", 0, 0], ["▲", 0, -1], ["", 0, 0], ["◀", -1, 0], ["▼", 0, 1], ["▶", 1, 0]].forEach(([a, dx, dy]) => {
     const b = document.createElement("button");
@@ -912,6 +960,7 @@
     eHint.textContent = "Нажми на мебель, потом двигай стрелками 👆";
     posHi();
   }
+  ep.querySelector("#eRot").onclick = rotate;
   ep.querySelector("#eDone").onclick = () => setEdit(false);
   ep.querySelector("#eReset").onclick = () => { moved = {}; applyPlan(curPlan, false); sel = null; posHi(); sendMsg({ type: "reset_layout" }); };
   canvas.addEventListener("pointerdown", (e) => {
@@ -922,7 +971,7 @@
     const ty = Math.floor(((e.clientY - rc.top) / rc.height) * ROWS);
     let hit = null;
     for (const it of LAYOUT.items) {
-      if (tx >= it.x && tx < it.x + it.w && (ty >= it.y && ty < it.y + it.h || TALL.includes(it.t) && ty === it.y - 1)) hit = it;
+      if (tx >= it.x && tx < it.x + it.w && (ty >= it.y && ty < it.y + it.h || !it.rot && TALL.includes(it.t) && ty === it.y - 1)) hit = it;
     }
     if (!hit) { sel = null; posHi(); return; }
     if (LOCK.includes(hit.t)) { showToast("Это двигать нельзя: на нём держится игра 🔒"); return; }
