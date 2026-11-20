@@ -623,5 +623,39 @@
     }
   };
 
+
+  // ---------- Огонёк (серия дней) ----------
+  const fire = document.createElement("button");
+  fire.textContent = "🔥 0";
+  fire.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#ff8a4c;color:#fff;font-size:13px;padding:4px 10px";
+  if (top) top.appendChild(fire);
+  const fBox = document.createElement("div");
+  fBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:40;align-items:center;justify-content:center";
+  document.body.appendChild(fBox);
+  let streak = { count: 0, broken: 0, left: 4 };
+  let fShown = false;
+  function renderFire() {
+    const s = streak;
+    if (s.broken) {
+      fBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:16px;width:90%;max-width:340px;text-align:center"><div style="font-size:40px">🕯️</div><b style="font-size:17px">Огонёк погас!</b><p style="font-size:14px">Вы жили вместе ' + s.broken + " дн. и не заходили больше суток. Восстановить бесплатно можно ещё <b>" + s.left + ' из 4</b> раз за эту неделю.</p><button id="fRes" style="width:100%;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:16px;padding:12px;margin-top:6px">🔥 Восстановить</button><button id="fNew" style="width:100%;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:14px;padding:10px;margin-top:8px">Начать заново</button></div>';
+      document.getElementById("fRes").onclick = () => { sendMsg({ type: "streak_restore" }); fBox.style.display = "none"; };
+      document.getElementById("fNew").onclick = () => { sendMsg({ type: "streak_reset" }); fBox.style.display = "none"; };
+    } else {
+      fBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:16px;width:90%;max-width:340px;text-align:center"><div style="font-size:40px">🔥</div><b style="font-size:17px">Вместе уже ' + s.count + ' дн.</b><p style="font-size:14px">Заходите хотя бы раз в сутки, чтобы огонёк не погас. Если погаснет, его можно бесплатно восстановить 4 раза в неделю.</p><button id="fClose" style="width:100%;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px">Закрыть</button></div>';
+      document.getElementById("fClose").onclick = () => { fBox.style.display = "none"; };
+    }
+  }
+  fire.onclick = () => { renderFire(); fBox.style.display = "flex"; };
+  const prevH5 = handleMessage;
+  handleMessage = function (msg) {
+    prevH5(msg);
+    if (msg && msg.type === "state" && msg.house && msg.house.streak) {
+      streak = msg.house.streak;
+      fire.textContent = (streak.broken ? "🕯️ " : "🔥 ") + (streak.broken || streak.count);
+      if (streak.broken && !fShown) { fShown = true; renderFire(); fBox.style.display = "flex"; }
+      if (!streak.broken && fBox.style.display === "flex" && !document.getElementById("fClose")) fBox.style.display = "none";
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
