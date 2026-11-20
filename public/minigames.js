@@ -900,7 +900,24 @@
   }
   const planBtn = document.createElement("button");
   planBtn.textContent = "🏠 План дома";
-  planBtn.onclick = () => sendMsg({ type: "set_plan", plan: ((curPlan || 0) + 1) % 3 });
+  const PLANS = [["Уютный домик", "Кухня и спальня слева, гостиная и уборка справа"], ["Зеркальный домик", "То же самое, но наоборот"], ["Большая гостиная", "Гостиная в центре, комнаты по бокам"]];
+  const pBox = document.createElement("div");
+  pBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:40;align-items:center;justify-content:center";
+  document.body.appendChild(pBox);
+  function renderPlans() {
+    pBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;text-align:center"><b style="font-size:18px">🏠 Выбери планировку</b><div id="pList"></div><button id="pClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
+    const list = pBox.querySelector("#pList");
+    PLANS.forEach((p, i) => {
+      const b = document.createElement("button");
+      const on = (curPlan || 0) === i;
+      b.style.cssText = "display:block;width:100%;margin:8px 0;text-align:left;border-radius:12px;padding:10px;font-size:14px;color:#6b2d45;background:" + (on ? "#ffe0ea" : "#fff") + ";border:3px solid " + (on ? "#ff6f91" : "#e0a0b8");
+      b.innerHTML = "<b>" + (i + 1) + ". " + p[0] + (on ? " ✅" : "") + "</b><br><small>" + p[1] + "</small>";
+      b.onclick = () => { pBox.style.display = "none"; if (!on) sendMsg({ type: "set_plan", plan: i }); };
+      list.appendChild(b);
+    });
+    pBox.querySelector("#pClose").onclick = () => { pBox.style.display = "none"; };
+  }
+  planBtn.onclick = () => { renderPlans(); pBox.style.display = "flex"; };
   const prevH7 = handleMessage;
   handleMessage = function (msg) {
     if (msg && msg.type === "state" && msg.house && msg.house.moved) {
