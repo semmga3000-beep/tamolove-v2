@@ -591,5 +591,37 @@
     }
   };
 
+
+  // ---------- Задания ----------
+  let quests = [];
+  const qBox = document.createElement("div");
+  qBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
+  qBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;text-align:center"><b style="font-size:18px">📋 Задания дня</b><div style="font-size:12px;margin:4px 0">Награда сама падает в общий счёт 🪙. Новые задания каждый день.</div><div id="qList"></div><button id="qClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
+  document.body.appendChild(qBox);
+  function renderQ() {
+    const box = document.getElementById("qList");
+    box.innerHTML = "";
+    for (const q of quests) {
+      const d = document.createElement("div");
+      d.style.cssText = "text-align:left;margin:8px 0;font-size:14px";
+      d.innerHTML = (q.d ? "✅ " : "") + q.n + " <b>+" + q.r + " 🪙</b>" + '<div style="height:9px;background:#f3d3de;border-radius:6px;overflow:hidden;margin-top:3px"><div style="height:100%;width:' + Math.round((q.p / q.t) * 100) + '%;background:' + (q.d ? "#7ed08a" : "#ff8fb1") + '"></div></div><small>' + q.p + " / " + q.t + "</small>";
+      box.appendChild(d);
+    }
+  }
+  const qBtn = document.createElement("button");
+  qBtn.textContent = "📋 Задания";
+  qBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#7ed08a;color:#fff;font-size:13px;padding:4px 10px";
+  qBtn.onclick = () => { renderQ(); qBox.style.display = "flex"; };
+  if (top) top.appendChild(qBtn);
+  document.getElementById("qClose").onclick = () => { qBox.style.display = "none"; };
+  const prevH4 = handleMessage;
+  handleMessage = function (msg) {
+    prevH4(msg);
+    if (msg && msg.type === "state" && msg.house && Array.isArray(msg.house.quests)) {
+      quests = msg.house.quests;
+      if (qBox.style.display === "flex") renderQ();
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
