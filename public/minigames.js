@@ -404,10 +404,12 @@
     r(x + 1, y, W - 2, 11, "#2f5f7f");
     r(x + 2, y + 1, W - 4, 8, "#6fc4e8");
     r(x + 2, y + 7, W - 4, 2, "#e8d49a");
-    r(x + 5, y + 3, 4, 2, "#ff9f5a");
-    r(x + 9, y + 4, 1, 1, "#ff9f5a");
-    r(x + W - 10, y + 5, 3, 2, "#ffd24d");
+    const fx = Math.round(Math.sin(curNow / 600) * 4), fx2 = Math.round(Math.cos(curNow / 800) * 5);
+    r(x + 8 + fx, y + 3, 4, 2, "#ff9f5a");
+    r(x + 12 + fx, y + 4, 1, 1, "#ff9f5a");
+    r(x + W / 2 + 2 + fx2, y + 5, 3, 2, "#ffd24d");
     r(x + 3, y + 5, 1, 3, "#3f9f5a");
+    r(x + 4 + (Math.floor(curNow / 500) % 2), y + 2 - (Math.floor(curNow / 400) % 3), 1, 1, "#ffffff");
   };
   SPR.shower = (x, y) => {
     r(x + 1, y - 14, 14, 30, "#8fb0c4");
@@ -415,9 +417,10 @@
     r(x + 2, y - 13, 12, 3, "#b9d4e0");
     r(x + 8, y - 10, 1, 4, "#9aa6ae");
     r(x + 5, y - 7, 7, 2, "#9aa6ae");
-    r(x + 6, y - 4, 1, 2, "#7fc4e8");
-    r(x + 9, y - 3, 1, 2, "#7fc4e8");
-    r(x + 7, y + 1, 1, 2, "#7fc4e8");
+    const sd = Math.floor(curNow / 120) % 3;
+    r(x + 6, y - 4 + sd * 3, 1, 2, "#7fc4e8");
+    r(x + 9, y - 3 + ((sd + 1) % 3) * 3, 1, 2, "#7fc4e8");
+    r(x + 7, y + 1 + ((sd + 2) % 3) * 2, 1, 2, "#7fc4e8");
     r(x + 2, y + 12, 12, 3, "#f4f4f8");
     r(x + 7, y + 13, 2, 1, "#9aa6ae");
   };
@@ -432,9 +435,10 @@
   };
   SPR.tv = (x, y, w) => {
     const W = w * 16;
+    const tf = Math.floor(curNow / 700) % 4;
     r(x + 3, y - 10, W - 6, 14, "#22252e");
-    r(x + 5, y - 8, W - 10, 9, "#6fb6d8");
-    r(x + 6, y - 7, 6, 2, "#c8ecfa");
+    r(x + 5, y - 8, W - 10, 9, ["#6fb6d8", "#e8a0c0", "#8fd88f", "#f0d070"][tf]);
+    r(x + 6 + ((Math.floor(curNow / 300) * 3) % (W - 16)), y - 7, 6, 2, "#ffffff");
     r(x + W / 2 - 3, y + 3, 6, 2, "#22252e");
   };
   // тумбочки вдоль стены, камин правее
@@ -561,10 +565,16 @@
   drawCharacter = function (c, look, sleeping) {
     const type = look.type || "human";
     const style = look.style || "short";
+    const nowt = performance.now();
+    if (c._lx !== undefined && (Math.abs(c.x - c._lx) > 0.001 || Math.abs(c.y - c._ly) > 0.001)) c._mv = nowt;
+    c._lx = c.x; c._ly = c.y;
+    const moving = c._mv && nowt - c._mv < 180;
+    const step = Math.floor(nowt / 110) % 2;
     const px = Math.round(c.x * T - 5);
-    const py = Math.round(c.y * T - 10);
+    const py0 = Math.round(c.y * T - 10);
+    const py = py0 + (type === "ghost" ? Math.round(Math.sin(nowt / 400) * 1.5) : moving && step ? -1 : 0);
     ctx.globalAlpha = sleeping ? 0.55 : type === "ghost" ? 0.85 : 1;
-    r(px, py + 15, 10, 3, "rgba(0,0,0,0.18)");
+    r(px, py0 + 15, 10, 3, "rgba(0,0,0,0.18)");
     const up = c.facing === "up";
     if (type === "ghost") {
       r(px + 1, py + 1, 8, 13, look.skin);
@@ -575,8 +585,8 @@
       r(px + 1, py + 9, 8, 2, look.shirt);
     } else {
       if (type === "animal") r(px - 2, py + 9, 3, 2, look.skin);
-      r(px + 2, py + 12, 2, 4, look.pants);
-      r(px + 6, py + 12, 2, 4, look.pants);
+      r(px + 2, py + 12, 2, moving && step ? 3 : 4, look.pants);
+      r(px + 6, py + 12, 2, moving && !step ? 3 : 4, look.pants);
       r(px + 1, py + 7, 8, 6, look.shirt);
       r(px + 1, py + 1, 8, 7, look.skin);
       if (type === "animal") {
@@ -785,8 +795,8 @@
       if (d < 260 && (!best || d < best.d)) best = { n, d };
     }
     dance.flash[l] = now;
-    if (best) { best.n.done = 1; dance.hits++; dance.msg = best.d < 110 ? "Идеально! ✨" : "Хорошо!"; dance.msgAt = now; }
-    else { dance.msg = "Мимо"; dance.msgAt = now; }
+    if (best) { if (window.TLSfx) TLSfx.hit(); best.n.done = 1; dance.hits++; dance.msg = best.d < 110 ? "Идеально! ✨" : "Хорошо!"; dance.msgAt = now; }
+    else { if (window.TLSfx) TLSfx.miss(); dance.msg = "Мимо"; dance.msgAt = now; }
   }
   LANES.forEach((a, i) => {
     const b = document.createElement("button");
@@ -1196,6 +1206,126 @@
       return;
     }
     prevH8(msg);
+  };
+
+
+  // ---------- Звуки, музыка, анимации, достижения ----------
+  let sndOn = true, musOn = false;
+  try { sndOn = localStorage.getItem("tl_snd") !== "0"; musOn = localStorage.getItem("tl_mus") === "1"; } catch (e) {}
+  let AC = null;
+  function actx() {
+    if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
+    if (AC.state === "suspended") AC.resume();
+    return AC;
+  }
+  function tone(f, d, type, vol, delay) {
+    const a = actx();
+    if (!a) return;
+    const t0 = a.currentTime + (delay || 0);
+    const o = a.createOscillator(), gn = a.createGain();
+    o.type = type || "sine"; o.frequency.value = f;
+    gn.gain.setValueAtTime(0.0001, t0);
+    gn.gain.exponentialRampToValueAtTime(vol || 0.05, t0 + 0.02);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+    o.connect(gn); gn.connect(a.destination);
+    o.start(t0); o.stop(t0 + d + 0.05);
+  }
+  const SFX = {
+    tick: () => tone(660, 0.05, "triangle", 0.03),
+    coin: () => { tone(988, 0.08, "square", 0.04); tone(1319, 0.2, "square", 0.04, 0.08); },
+    ok: () => { tone(523, 0.12, "triangle", 0.06); tone(659, 0.12, "triangle", 0.06, 0.1); tone(784, 0.2, "triangle", 0.06, 0.2); },
+    bad: () => { tone(220, 0.15, "sawtooth", 0.04); tone(165, 0.2, "sawtooth", 0.04, 0.12); },
+    heart: () => { tone(784, 0.15, "sine", 0.06); tone(988, 0.25, "sine", 0.06, 0.12); },
+    win: () => { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.18, "triangle", 0.06, i * 0.12)); },
+    hit: () => tone(880, 0.1, "triangle", 0.06),
+    miss: () => tone(180, 0.1, "sawtooth", 0.03)
+  };
+  window.TLSfx = { hit: () => sndOn && SFX.hit(), miss: () => sndOn && SFX.miss() };
+  const play = (n) => { if (sndOn) SFX[n](); };
+  document.addEventListener("click", (e) => { if (e.target.closest && e.target.closest("button")) play("tick"); }, true);
+  window.addEventListener("pointerdown", () => actx(), { once: true });
+  // музыка: мягкая мелодия
+  const SC = [262, 294, 330, 392, 440, 523];
+  const MEL = [0, 2, 3, 2, 4, 3, 2, 0, 1, 2, 3, 5, 4, 3, 2, 1];
+  let mi = 0;
+  setInterval(() => {
+    if (!musOn || document.hidden) return;
+    const n = MEL[mi % MEL.length];
+    tone(SC[n], 0.7, "sine", 0.018);
+    if (mi % 4 === 0) tone(SC[n] / 2, 1.6, "triangle", 0.015);
+    mi++;
+  }, 520);
+  function floatFx(em, n) {
+    const fr = document.getElementById("frame");
+    if (!fr) return;
+    for (let i = 0; i < n; i++) {
+      const el = document.createElement("span");
+      el.textContent = em;
+      el.style.cssText = "position:absolute;pointer-events:none;font-size:22px;z-index:6;left:" + (15 + Math.random() * 70) + "%;bottom:" + (20 + Math.random() * 20) + "%";
+      fr.appendChild(el);
+      const a = el.animate([{ transform: "translateY(0) scale(.6)", opacity: 0 }, { opacity: 1, offset: 0.2 }, { transform: "translateY(-90px) scale(1.2)", opacity: 0 }], { duration: 1300 + Math.random() * 600, delay: i * 120 });
+      a.onfinish = () => el.remove();
+    }
+  }
+  const prevH9 = handleMessage;
+  handleMessage = function (msg) {
+    prevH9(msg);
+    if (msg && (msg.type === "toast" || msg.type === "dance_end") && msg.text) {
+      const t = msg.text;
+      if (t.includes("🏆")) { play("win"); floatFx("🏆", 3); floatFx("🎉", 4); }
+      else if (t.includes("🎯")) { play("ok"); floatFx("🎯", 3); }
+      else if (t.includes("🪙") && t.includes("+")) { play("coin"); floatFx("🪙", 4); }
+      else if (t.includes("🚫") || t.includes("Не хватает") || t.includes("нельзя")) play("bad");
+      else if (t.includes("❤️")) { play("heart"); floatFx("❤️", 5); }
+      else if (t.includes("✨")) { play("ok"); floatFx("✨", 5); }
+      else if (t.includes("🍽️") || t.includes("Ням")) { play("ok"); floatFx("😋", 2); }
+    }
+  };
+  // кнопки в меню
+  function menuToggle(label, get, set) {
+    const b = document.createElement("button");
+    const paintB = () => { b.textContent = label + (get() ? ": вкл" : ": выкл"); };
+    b.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#8fa6d9;color:#fff";
+    b.onclick = (e) => { e.stopPropagation(); set(!get()); paintB(); actx(); };
+    paintB();
+    menu.appendChild(b);
+  }
+  menuToggle("🔊 Звуки", () => sndOn, (v) => { sndOn = v; try { localStorage.setItem("tl_snd", v ? "1" : "0"); } catch (e) {} });
+  menuToggle("🎵 Музыка", () => musOn, (v) => { musOn = v; try { localStorage.setItem("tl_mus", v ? "1" : "0"); } catch (e) {} });
+  // достижения
+  let achs = [];
+  const aBox = document.createElement("div");
+  aBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
+  aBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;max-height:85%;overflow:auto;text-align:center"><b style="font-size:18px">🏆 Достижения</b><div id="aList"></div><button id="aClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
+  document.body.appendChild(aBox);
+  function renderA() {
+    const box = document.getElementById("aList");
+    box.innerHTML = "";
+    const done = achs.filter((a) => a.d).length;
+    const h = document.createElement("div");
+    h.style.cssText = "font-size:12px;margin:4px 0 8px";
+    h.textContent = "Получено: " + done + " из " + achs.length + ". Награда падает в общий счёт 🪙";
+    box.appendChild(h);
+    for (const a of achs) {
+      const d = document.createElement("div");
+      d.style.cssText = "text-align:left;margin:7px 0;font-size:14px;opacity:" + (a.d ? 1 : 0.85);
+      d.innerHTML = (a.d ? "🏆 " : "🔒 ") + a.n + " <b>+" + a.r + " 🪙</b>" + '<div style="height:7px;background:#f3d3de;border-radius:5px;overflow:hidden;margin-top:3px"><div style="height:100%;width:' + Math.round((a.p / a.t) * 100) + '%;background:' + (a.d ? "#7ed08a" : "#ff8fb1") + '"></div></div><small>' + a.p + " / " + a.t + "</small>";
+      box.appendChild(d);
+    }
+  }
+  const aBtn = document.createElement("button");
+  aBtn.textContent = "🏆 Достижения";
+  aBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#e0a030;color:#fff";
+  aBtn.onclick = () => { renderA(); aBox.style.display = "flex"; menu.style.display = "none"; };
+  menu.insertBefore(aBtn, menu.children[3] || null);
+  document.getElementById("aClose").onclick = () => { aBox.style.display = "none"; };
+  const prevH10 = handleMessage;
+  handleMessage = function (msg) {
+    prevH10(msg);
+    if (msg && msg.type === "state" && msg.house && Array.isArray(msg.house.ach)) {
+      achs = msg.house.ach;
+      if (aBox.style.display === "flex") renderA();
+    }
   };
 
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
