@@ -375,7 +375,7 @@
     { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 8 } },
     { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 2 } },
     { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 8 } },
-    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 1, y: 8 } },
+    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 1, y: 12 } },
     { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 14, y: 1, w: 2 } },
     { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 14, y: 1, w: 2, solid: false } }
   ];
@@ -397,7 +397,7 @@
   };
   // тумбочки вдоль стены, камин правее
   for (const i of LAYOUT.items) {
-    if (i.t === "nightstand" && i.x === 4 && i.y === 9 && !i.sid) { i.x = 3; i.y = 8; }
+    if (i.t === "nightstand" && i.x === 4 && i.y === 9 && !i.sid) { i.x = 1; i.y = 8; }
     else if (i.t === "fireplace") i.x = 16;
   }
   let owned = [];
