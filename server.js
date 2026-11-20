@@ -340,6 +340,7 @@ function publicState(code) {
       plan: house.plan || 0,
       moved: house.moved || {},
       paint: house.paint || { wall: null, floor: null },
+      ach: ACH.map((a) => ({ id: a.id, n: a.n, p: Math.min(a.t, statVal(house, a.s)), t: a.t, r: a.r, d: !!(house.ach && house.ach[a.id]) })),
       streak: { count: streakOf(house).count, broken: streakOf(house).broken, left: Math.max(0, 4 - streakOf(house).used) },
       quests: QUESTS.map((d) => {
         const q = qState(house);
@@ -394,7 +395,12 @@ function touchStreak(house) {
   if (s.last && now - s.last > 24 * 3600 * 1000) { s.broken = Math.max(1, s.count); return; }
   s.last = now;
   const day = new Date(shifted).toISOString().slice(0, 10);
-  if (s.day !== day) { s.day = day; s.count += 1; }
+  if (s.day !== day) {
+    s.day = day;
+    s.count += 1;
+    const at = achCheck(house);
+    if (at) notifyHouse(house, "Вы вместе уже " + s.count + " дн.!" + at);
+  }
 }
 
 const QUESTS = [
@@ -410,17 +416,65 @@ function qState(house) {
   if (!house.quests || house.quests.day !== today()) house.quests = { day: today(), p: {}, done: {} };
   return house.quests;
 }
+const ACH = [
+  { id: "eat20", n: "Гурманы: 20 порций", s: "eat", t: 20, r: 5 },
+  { id: "eat100", n: "Большие гурманы: 100 порций", s: "eat", t: 100, r: 15 },
+  { id: "cook10", n: "Шеф-повара: 10 блюд", s: "cook", t: 10, r: 5 },
+  { id: "cook50", n: "Мастера кухни: 50 блюд", s: "cook", t: 50, r: 15 },
+  { id: "perf5", n: "5 шедевров на плите", s: "perfect", t: 5, r: 8 },
+  { id: "clean10", n: "Чистюли: 10 уборок", s: "clean", t: 10, r: 5 },
+  { id: "clean40", n: "Блестящий дом: 40 уборок", s: "clean", t: 40, r: 12 },
+  { id: "dance5", n: "Танцоры: 5 танцев", s: "dance", t: 5, r: 6 },
+  { id: "dance20", n: "Звёзды танцпола: 20 танцев", s: "dance", t: 20, r: 15 },
+  { id: "buy5", n: "Новосёлы: 5 покупок", s: "buy", t: 5, r: 5 },
+  { id: "buy12", n: "Дизайнеры: 12 покупок", s: "buy", t: 12, r: 12 },
+  { id: "str3", n: "3 дня вместе", s: "streak", t: 3, r: 3 },
+  { id: "str7", n: "Неделя вместе", s: "streak", t: 7, r: 7 },
+  { id: "str14", n: "Две недели вместе", s: "streak", t: 14, r: 12 },
+  { id: "str30", n: "Месяц вместе", s: "streak", t: 30, r: 25 },
+  { id: "look1", n: "Новый образ", s: "look", t: 1, r: 2 },
+  { id: "plan1", n: "Перестроили дом", s: "plan", t: 1, r: 2 },
+  { id: "paint1", n: "Свежий ремонт", s: "paint", t: 1, r: 2 }
+];
+function statVal(house, s) {
+  return s === "streak" ? streakOf(house).count : (house.stats && house.stats[s]) || 0;
+}
+function achCheck(house) {
+  if (!house.ach) house.ach = {};
+  let out = "";
+  for (const a of ACH) {
+    if (!house.ach[a.id] && statVal(house, a.s) >= a.t) {
+      house.ach[a.id] = true;
+      house.coins += a.r;
+      out += " 🏆 " + a.n + "! +" + a.r + " 🪙";
+    }
+  }
+  return out;
+}
+function statAdd(house, key, n) {
+  if (!house.stats) house.stats = {};
+  house.stats[key] = (house.stats[key] || 0) + n;
+  return achCheck(house);
+}
+function notifyHouse(house, text) {
+  const code = Object.keys(houses).find((k) => houses[k] === house);
+  if (!code || !live[code]) return;
+  for (const rl of ROLES) if (live[code][rl]) send(live[code][rl], { type: "toast", text });
+}
 function qAdd(house, id, n) {
+  const ach = statAdd(house, id, n);
   const q = qState(house);
   const d = QUESTS.find((x) => x.id === id);
-  if (!d || q.done[id]) return "";
-  q.p[id] = (q.p[id] || 0) + n;
-  if (q.p[id] >= d.t) {
-    q.done[id] = true;
-    house.coins += d.r;
-    return " 🎯 Задание выполнено! +" + d.r + " 🪙";
+  let out = "";
+  if (d && !q.done[id]) {
+    q.p[id] = (q.p[id] || 0) + n;
+    if (q.p[id] >= d.t) {
+      q.done[id] = true;
+      house.coins += d.r;
+      out = " 🎯 Задание выполнено! +" + d.r + " 🪙";
+    }
   }
-  return "";
+  return out + ach;
 }
 
 function finishDance(code, d) {
@@ -512,7 +566,8 @@ function doCook(house, role, score) {
   p.carrying = true;
   p.tier = tier;
   house.coins += COOK_COINS[tier];
-  return COOK_TEXT[tier] + " +" + COOK_COINS[tier] + " 🪙" + qAdd(house, "cook", 1);
+  const perf = tier === 3 ? statAdd(house, "perfect", 1) : "";
+  return COOK_TEXT[tier] + " +" + COOK_COINS[tier] + " 🪙" + qAdd(house, "cook", 1) + perf;
 }
 
 // Уборка: игрок оттёр пятна (0-8)
@@ -590,6 +645,7 @@ wss.on("connection", (ws) => {
       const okv = (v, pre) => v === null || (typeof v === "string" && v.startsWith(pre) && SHOP[v] !== undefined && (CUR.owned || []).includes(v));
       if (msg.wall !== undefined && okv(msg.wall, "w_")) CUR.paint.wall = msg.wall;
       if (msg.floor !== undefined && okv(msg.floor, "f_")) CUR.paint.floor = msg.floor;
+      if (msg.wall || msg.floor) notifyHouse(CUR, "Свежий ремонт! 🎨" + statAdd(CUR, "paint", 1));
       markDirty(ws.house, true);
       broadcast(ws.house);
       return;
@@ -601,6 +657,7 @@ wss.on("connection", (ws) => {
       const op = CUR.plan || 0;
       if (op === np) return;
       CUR.plan = np;
+      const planAch = statAdd(CUR, "plan", 1);
       for (const rl of ROLES) {
         const pp = CUR.players[rl];
         if (!pp) continue;
@@ -608,7 +665,7 @@ wss.on("connection", (ws) => {
         else if (op === 2) { pp.x = np === 1 ? 20 - SPAWN[rl].x : SPAWN[rl].x; pp.y = SPAWN[rl].y; }
         else pp.x = 20 - pp.x;
       }
-      for (const rl of ROLES) if (live[ws.house] && live[ws.house][rl]) send(live[ws.house][rl], { type: "toast", text: "Дом перестроен! 🏠✨" });
+      for (const rl of ROLES) if (live[ws.house] && live[ws.house][rl]) send(live[ws.house][rl], { type: "toast", text: "Дом перестроен! 🏠✨" + planAch });
       markDirty(ws.house, true);
       broadcast(ws.house);
       return;
@@ -797,7 +854,7 @@ wss.on("connection", (ws) => {
       if (!["short", "long", "bun"].includes(L.style)) return;
       if (!hex(L.skin) || !hex(L.hair) || !hex(L.shirt) || !hex(L.pants)) return;
       me.look = { type: L.type, style: L.style, skin: L.skin, hair: L.hair, shirt: L.shirt, pants: L.pants };
-      send(ws, { type: "toast", text: "Новый образ! ✨" });
+      send(ws, { type: "toast", text: "Новый образ! ✨" + statAdd(houses[code], "look", 1) });
       markDirty(code, true);
       broadcast(code);
       return;
@@ -816,8 +873,9 @@ wss.on("connection", (ws) => {
       if (house.coins < cost) { send(ws, { type: "toast", text: "Не хватает монет 🪙" }); return; }
       house.coins -= cost;
       house.owned.push(msg.id);
+      const buyAch = statAdd(house, "buy", 1);
       for (const rl of ROLES) {
-        if (live[code] && live[code][rl]) send(live[code][rl], { type: "toast", text: "Новая вещь в доме! 🛋️✨" });
+        if (live[code] && live[code][rl]) send(live[code][rl], { type: "toast", text: "Новая вещь в доме! 🛋️✨" + buyAch });
       }
       markDirty(code, true);
       broadcast(code);
