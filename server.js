@@ -149,10 +149,11 @@ const TICK_SECONDS = 5;       // как часто сервер пересчит
 const OFFLINE_FACTOR = 0.2;   // во сне (не в сети) всё падает в 5 раз медленнее
 const FLOOR = 25;             // за долгое отсутствие показатели не упадут ниже
 const RATE = {                // падение в секунду, когда игрок в сети
-  satiety: 0.12,
-  energy: 0.08,
-  clean: 0.05
+  satiety: 100 / (12 * 3600), // с полного до нуля примерно за 12 часов в сети
+  energy: 100 / (18 * 3600),  // примерно за 18 часов
+  clean: 100 / (24 * 3600)    // дом пачкается примерно за сутки
 };
+const MOOD_SCALE = 0.02;        // настроение меняется медленнее в том же духе
 const REACH = 1.3;            // как близко надо подойти к предмету
 
 // Еда по качеству блюда (1 подгорело, 2 вкусно, 3 шедевр)
@@ -268,7 +269,7 @@ function catchUp(house) {
     if (!p) continue;
     p.satiety = slowDecay(p.satiety, RATE.satiety * f);
     p.energy = slowDecay(p.energy, RATE.energy * f);
-    p.mood = slowDecay(p.mood, 0.01 * f);
+    p.mood = slowDecay(p.mood, 0.01 * MOOD_SCALE * f);
   }
   house.clean = slowDecay(house.clean, RATE.clean * f);
 }
@@ -601,9 +602,9 @@ setInterval(() => {
 
       const low = p.satiety < 30 || p.energy < 30 || house.clean < 30;
       const good = p.satiety > 50 && p.energy > 50 && house.clean > 50;
-      if (low) p.mood = clamp(p.mood - 0.06 * f);
-      else if (good) p.mood = clamp(p.mood + 0.03 * f);
-      else p.mood = clamp(p.mood - 0.01 * f);
+      if (low) p.mood = clamp(p.mood - 0.06 * MOOD_SCALE * f);
+      else if (good) p.mood = clamp(p.mood + 0.03 * MOOD_SCALE * f);
+      else p.mood = clamp(p.mood - 0.01 * MOOD_SCALE * f);
     }
     house.clean = clamp(house.clean - RATE.clean * TICK_SECONDS);
     house.lastSeen = Date.now();
