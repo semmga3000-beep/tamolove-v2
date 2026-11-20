@@ -447,5 +447,128 @@
     }
   };
 
+
+  // ---------- Внешность ----------
+  const PAL = {
+    skin: { human: ["#f5c9a0", "#ffe0cc", "#e8b48a", "#c68a5e", "#8d5a3b"], animal: ["#e8a050", "#b0b0b8", "#fafafa", "#a8744c", "#3a3a44", "#ffb6c8"], ghost: ["#ffffff", "#d8f0ff", "#ffd8f0", "#e8ffd8", "#e8d8ff"] },
+    hair: ["#2f2a3a", "#5a3825", "#a0522d", "#e8c36a", "#ff8fb1", "#6fa8ff", "#ffffff", "#d04040"],
+    shirt: ["#ff6f91", "#6fa8ff", "#7ed08a", "#ffd24d", "#b79bd1", "#ff9f5a", "#ffffff", "#3a3a44"],
+    pants: ["#4a5a8a", "#5a4a7a", "#3a3a44", "#8a5a2c", "#2f6f6f", "#c0c0d0"]
+  };
+  const TYPES = [["human", "👤 Человек"], ["animal", "🐱 Зверёк"], ["ghost", "👻 Призрак"]];
+  const STYLES = [["short", "Короткие"], ["long", "Длинные"], ["bun", "Пучок"]];
+  const cur = () => looks[myRole];
+  drawCharacter = function (c, look, sleeping) {
+    const type = look.type || "human";
+    const style = look.style || "short";
+    const px = Math.round(c.x * T - 5);
+    const py = Math.round(c.y * T - 10);
+    ctx.globalAlpha = sleeping ? 0.55 : type === "ghost" ? 0.85 : 1;
+    r(px, py + 15, 10, 3, "rgba(0,0,0,0.18)");
+    const up = c.facing === "up";
+    if (type === "ghost") {
+      r(px + 1, py + 1, 8, 13, look.skin);
+      r(px, py + 4, 10, 10, look.skin);
+      r(px, py + 14, 2, 2, look.skin);
+      r(px + 4, py + 14, 2, 2, look.skin);
+      r(px + 8, py + 14, 2, 2, look.skin);
+      r(px + 1, py + 9, 8, 2, look.shirt);
+    } else {
+      if (type === "animal") r(px - 2, py + 9, 3, 2, look.skin);
+      r(px + 2, py + 12, 2, 4, look.pants);
+      r(px + 6, py + 12, 2, 4, look.pants);
+      r(px + 1, py + 7, 8, 6, look.shirt);
+      r(px + 1, py + 1, 8, 7, look.skin);
+      if (type === "animal") {
+        r(px + 1, py - 2, 3, 3, look.skin);
+        r(px + 6, py - 2, 3, 3, look.skin);
+        r(px + 2, py - 1, 1, 1, "#ffb6c8");
+        r(px + 7, py - 1, 1, 1, "#ffb6c8");
+      }
+    }
+    // волосы
+    r(px, py, 10, 3, look.hair);
+    if (style === "bun") r(px + 3, py - 3, 4, 3, look.hair);
+    if (up) {
+      r(px, py, 10, 7, look.hair);
+      if (style === "long") r(px, py + 7, 10, 4, look.hair);
+    } else {
+      const len = style === "long" ? 7 : 3;
+      r(px, py + 3, 2, len, look.hair);
+      r(px + 8, py + 3, 2, len, look.hair);
+      r(px + 2, py + 3, 3, 1, look.hair); // чёлка
+    }
+    if (!up) {
+      if (sleeping) {
+        r(px + 2, py + 6, 2, 1, "#222");
+        r(px + 6, py + 6, 2, 1, "#222");
+      } else if (c.facing === "left") r(px + 2, py + 5, 2, 2, "#222");
+      else if (c.facing === "right") r(px + 6, py + 5, 2, 2, "#222");
+      else { r(px + 2, py + 5, 2, 2, "#222"); r(px + 6, py + 5, 2, 2, "#222"); }
+      if (type === "animal") r(px + 4, py + 6, 2, 1, "#e0507a");
+    }
+    if (c.carrying) {
+      r(px + 7, py + 8, 6, 5, "#8b5e34");
+      r(px + 8, py + 8, 4, 2, "#e8803a");
+    }
+    ctx.globalAlpha = 1;
+  };
+  const look = document.createElement("div");
+  look.style.cssText = "position:fixed;left:0;right:0;bottom:0;max-height:44%;overflow:auto;background:#fff8f0;border-top:3px solid #6b2d45;border-radius:16px 16px 0 0;padding:10px 12px 16px;display:none;z-index:30;text-align:center;font-size:13px";
+  document.body.appendChild(look);
+  let backup = null;
+  function chips(label, items, getter, setter) {
+    const d = document.createElement("div");
+    d.style.margin = "3px 0";
+    d.innerHTML = "<b>" + label + "</b><br>";
+    for (const it of items) {
+      const val = Array.isArray(it) ? it[0] : it;
+      const b = document.createElement("button");
+      const isColor = typeof val === "string" && val[0] === "#";
+      b.style.cssText = "margin:2px;border-radius:9px;border:3px solid " + (getter() === val ? "#6b2d45" : "#e0a0b8") + ";font-size:13px;padding:4px 6px;" + (isColor ? "width:28px;height:28px;background:" + val : "background:#fff;color:#6b2d45");
+      if (!isColor) b.textContent = it[1];
+      b.onclick = () => { setter(val); renderLook(); };
+      d.appendChild(b);
+    }
+    look.appendChild(d);
+  }
+  function renderLook() {
+    const L = cur();
+    look.innerHTML = '<b style="font-size:16px">🎨 Смена внешки</b>';
+    chips("Кто ты", TYPES, () => L.type || "human", (v) => { L.type = v; L.skin = PAL.skin[v][0]; });
+    chips(L.type === "animal" ? "Шёрстка" : L.type === "ghost" ? "Цвет призрака" : "Кожа", PAL.skin[L.type || "human"], () => L.skin, (v) => { L.skin = v; });
+    chips("Причёска", STYLES, () => L.style || "short", (v) => { L.style = v; });
+    chips("Цвет волос", PAL.hair, () => L.hair, (v) => { L.hair = v; });
+    chips(L.type === "ghost" ? "Шарфик" : "Одежда", PAL.shirt, () => L.shirt, (v) => { L.shirt = v; });
+    if (L.type !== "ghost") chips("Штаны", PAL.pants, () => L.pants, (v) => { L.pants = v; });
+    const ok = document.createElement("button");
+    ok.textContent = "Готово ✅";
+    ok.style.cssText = "margin:8px 6px 0;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:16px;padding:10px 22px";
+    ok.onclick = () => { look.style.display = "none"; sendMsg({ type: "look", look: Object.assign({ type: "human", style: "short" }, cur()) }); };
+    const no = document.createElement("button");
+    no.textContent = "Отмена";
+    no.style.cssText = "margin:8px 6px 0;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 22px";
+    no.onclick = () => { look.style.display = "none"; Object.assign(cur(), backup); };
+    look.appendChild(ok);
+    look.appendChild(no);
+  }
+  document.getElementById("lookBtn").addEventListener("click", (e) => {
+    e.stopImmediatePropagation();
+    if (!myRole) return;
+    backup = Object.assign({}, cur());
+    renderLook();
+    look.style.display = "block";
+  }, true);
+  const prevH2 = handleMessage;
+  handleMessage = function (msg) {
+    prevH2(msg);
+    if (msg && msg.type === "state" && msg.players && look.style.display === "none") {
+      for (const rl of ["caregiver", "receiver"]) {
+        const pl = msg.players[rl];
+        if (pl && pl.look && !(rl === myRole && look.style.display !== "none")) Object.assign(looks[rl], pl.look);
+      }
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
