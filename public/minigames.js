@@ -380,7 +380,7 @@
     { id: "arm", n: "Кресло", e: "🛋️", c: 7, it: { t: "armchair", x: 11, y: 5 } },
     { id: "pouf", n: "Пуф на кухне", e: "🟣", c: 4, it: { t: "pouf", x: 9, y: 4 } },
     { id: "lamp3", n: "Лампа на кухне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 6 } },
-    { id: "shelf", n: "Книжный шкаф в спальне", e: "📚", c: 8, it: { t: "bookshelf", x: 2, y: 12, w: 2 } },
+    { id: "shelf", n: "Книжный шкаф в спальне", e: "📚", c: 8, it: { t: "bookshelf", x: 2, y: 8, w: 2 } },
     { id: "aqua", n: "Аквариум", e: "🐠", c: 12, it: { t: "aquarium", x: 14, y: 8, w: 2 } },
     { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 14, y: 1, w: 2, solid: false } }
   ];
@@ -398,14 +398,15 @@
   };
   SPR.aquarium = (x, y, w) => {
     const W = w * 16;
-    r(x + 1, y - 6, W - 2, 21, "#2f5f7f");
-    r(x + 2, y - 5, W - 4, 17, "#6fc4e8");
-    r(x + 2, y + 6, W - 4, 6, "#e8d49a");
-    r(x + 6, y - 1, 4, 2, "#ff9f5a");
-    r(x + 10, y, 2, 1, "#ff9f5a");
-    r(x + W - 12, y + 3, 4, 2, "#ffd24d");
-    r(x + 4, y + 8, 2, 3, "#3f9f5a");
-    r(x, y + 12, W, 4, "#5a3d25");
+    r(x, y + 10, W, 6, "#5a3d25");
+    r(x + 2, y + 11, W - 4, 1, "#7a5535");
+    r(x + 1, y, W - 2, 11, "#2f5f7f");
+    r(x + 2, y + 1, W - 4, 8, "#6fc4e8");
+    r(x + 2, y + 7, W - 4, 2, "#e8d49a");
+    r(x + 5, y + 3, 4, 2, "#ff9f5a");
+    r(x + 9, y + 4, 1, 1, "#ff9f5a");
+    r(x + W - 10, y + 5, 3, 2, "#ffd24d");
+    r(x + 3, y + 5, 1, 3, "#3f9f5a");
   };
   SPR.tvstand = (x, y, w) => {
     const W = w * 16;
@@ -456,7 +457,9 @@
     LAYOUT.items = LAYOUT.items.filter((i) => !i.sid);
     for (const c of CATALOG) {
       if (!owned.includes(c.id)) continue;
-      const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id }, c.it);
+      const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id, k: c.id }, c.it);
+      const mv = moved[c.id === "tv" ? "tvs" : c.id];
+      if (mv) { it.x = mv.x; it.y = mv.y; }
       if (typeof curPlan !== "undefined" && curPlan === 1) it.x = 20 - it.x - it.w;
       LAYOUT.items.push(it);
     }
@@ -804,7 +807,8 @@
 
   // ---------- Планировка дома (зеркальная) и меню ----------
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const SNAP = { map: clone(LAYOUT.map), rugs: clone(LAYOUT.rugs), decor: clone(LAYOUT.decor), zones: clone(ZONES), spawn: clone(LAYOUT.spawn), items: LAYOUT.items.filter((i) => !i.sid).map(clone) };
+  const SNAP = { map: clone(LAYOUT.map), rugs: clone(LAYOUT.rugs), decor: clone(LAYOUT.decor), zones: clone(ZONES), spawn: clone(LAYOUT.spawn), items: LAYOUT.items.filter((i) => !i.sid).map((i) => { const c = clone(i); c.k = i.t + "_" + i.x + "_" + i.y; return c; }) };
+  let moved = {};
   let curPlan = null;
   const mx = (o) => Object.assign({}, o, { x: 20 - o.x - (o.w || 1) });
   function applyPlan(n, mirrorMe) {
@@ -812,7 +816,12 @@
     LAYOUT.map = f ? SNAP.map.map((row) => row.split("").reverse().join("")) : clone(SNAP.map);
     LAYOUT.rugs = f ? SNAP.rugs.map(mx) : clone(SNAP.rugs);
     LAYOUT.decor = f ? SNAP.decor.map(mx) : clone(SNAP.decor);
-    LAYOUT.items = (f ? SNAP.items.map((i) => { const m = mx(i); if (m.dir === "left") m.dir = "right"; else if (m.dir === "right") m.dir = "left"; return m; }) : clone(SNAP.items));
+    LAYOUT.items = SNAP.items.map((i) => {
+      const c = clone(i);
+      if (moved[c.k]) { c.x = moved[c.k].x; c.y = moved[c.k].y; }
+      if (f) { c.x = 20 - c.x - c.w; if (c.dir === "left") c.dir = "right"; else if (c.dir === "right") c.dir = "left"; }
+      return c;
+    });
     LAYOUT.spawn = f ? { caregiver: { x: 20 - SNAP.spawn.caregiver.x, y: SNAP.spawn.caregiver.y }, receiver: { x: 20 - SNAP.spawn.receiver.x, y: SNAP.spawn.receiver.y } } : clone(SNAP.spawn);
     for (const k of Object.keys(ZONES)) delete ZONES[k];
     for (const k of Object.keys(SNAP.zones)) ZONES[k] = f ? SNAP.zones[k].map(mx) : clone(SNAP.zones[k]);
@@ -826,11 +835,107 @@
   planBtn.onclick = () => sendMsg({ type: "set_plan", plan: curPlan === 1 ? 0 : 1 });
   const prevH7 = handleMessage;
   handleMessage = function (msg) {
+    if (msg && msg.type === "state" && msg.house && msg.house.moved) {
+      const str = JSON.stringify(msg.house.moved);
+      if (str !== JSON.stringify(moved)) {
+        moved = msg.house.moved;
+        if (curPlan !== null && msg.house.plan === curPlan) { applyPlan(curPlan, false); posHi(); }
+      }
+    }
     if (msg && msg.type === "state" && msg.house && typeof msg.house.plan === "number" && msg.house.plan !== curPlan) {
       applyPlan(msg.house.plan, curPlan !== null);
     }
     prevH7(msg);
   };
+
+  // ---------- Двигать мебель ----------
+  const LOCK = ["stove", "bowl", "table", "chair", "bed", "bucket", "washer", "basket"];
+  const TALL = ["bookshelf", "fireplace", "tv"];
+  let editOn = false, sel = null;
+  const hi = document.createElement("div");
+  hi.style.cssText = "position:fixed;border:3px dashed #ff3d7f;background:rgba(255,61,127,.15);pointer-events:none;display:none;z-index:20";
+  document.body.appendChild(hi);
+  const ep = document.createElement("div");
+  ep.style.cssText = "position:fixed;left:0;right:0;bottom:0;background:#fff8f0;border-top:3px solid #6b2d45;border-radius:16px 16px 0 0;padding:10px 12px 14px;display:none;z-index:35;text-align:center;font-size:14px";
+  ep.innerHTML = '<div id="eHint" style="margin-bottom:6px"></div><div id="eArr" style="display:inline-grid;grid-template-columns:repeat(3,54px);gap:5px"></div><div style="margin-top:8px"><button id="eDone" style="border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:15px;padding:9px 18px;margin:3px">Готово ✅</button><button id="eReset" style="border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:13px;padding:9px 12px;margin:3px">Всё как было</button></div>';
+  document.body.appendChild(ep);
+  const eArr = ep.querySelector("#eArr"), eHint = ep.querySelector("#eHint");
+  function itemByKey(k) { return LAYOUT.items.find((i) => i.k === k); }
+  function posHi() {
+    const it = sel && itemByKey(sel);
+    if (!editOn || !it) { hi.style.display = "none"; return; }
+    const rc = canvas.getBoundingClientRect();
+    const sc = rc.width / canvas.width;
+    const top0 = TALL.includes(it.t) ? it.y - 1 : it.y;
+    hi.style.left = rc.left + it.x * T * sc + "px";
+    hi.style.top = rc.top + top0 * T * sc + "px";
+    hi.style.width = it.w * T * sc + "px";
+    hi.style.height = (it.y + it.h - top0) * T * sc + "px";
+    hi.style.display = "block";
+  }
+  function canPlace(it, nx, ny) {
+    for (let tx = nx; tx < nx + it.w; tx++) for (let ty = ny; ty < ny + it.h; ty++) {
+      if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
+      const c = tileAt(tx, ty);
+      if (c === "#" || c === "d") return false;
+    }
+    if (it.solid) {
+      const ov = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+      const me = { x: nx, y: ny, w: it.w, h: it.h };
+      for (const o of LAYOUT.items) if (o !== it && o.solid && ov(me, o)) return false;
+      for (const pl of [player, partner]) if (pl && ov(me, { x: Math.floor(pl.x), y: Math.floor(pl.y), w: 1, h: 1 })) return false;
+    }
+    return true;
+  }
+  function nudge(dx, dy) {
+    const it = sel && itemByKey(sel);
+    if (!it) return;
+    const nx = it.x + dx, ny = it.y + dy;
+    if (!canPlace(it, nx, ny)) { showToast("Сюда нельзя 🚫"); return; }
+    const key = sel === "tv" ? "tvs" : sel;
+    const cx = curPlan === 1 ? 20 - nx - it.w : nx;
+    moved[key] = { x: cx, y: ny };
+    applyPlan(curPlan, false);
+    posHi();
+    sendMsg({ type: "move_item", id: key, x: cx, y: ny });
+  }
+  [["", 0, 0], ["▲", 0, -1], ["", 0, 0], ["◀", -1, 0], ["▼", 0, 1], ["▶", 1, 0]].forEach(([a, dx, dy]) => {
+    const b = document.createElement("button");
+    b.textContent = a;
+    b.style.cssText = "height:48px;border:none;border-radius:12px;font-size:22px;color:#fff;background:" + (a ? "#ff8fb1" : "transparent");
+    if (a) b.onclick = () => nudge(dx, dy);
+    eArr.appendChild(b);
+  });
+  function setEdit(on) {
+    editOn = on; sel = null;
+    ep.style.display = on ? "block" : "none";
+    eHint.textContent = "Нажми на мебель, потом двигай стрелками 👆";
+    posHi();
+  }
+  ep.querySelector("#eDone").onclick = () => setEdit(false);
+  ep.querySelector("#eReset").onclick = () => { moved = {}; applyPlan(curPlan, false); sel = null; posHi(); sendMsg({ type: "reset_layout" }); };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (!editOn) return;
+    e.stopPropagation();
+    const rc = canvas.getBoundingClientRect();
+    const tx = Math.floor(((e.clientX - rc.left) / rc.width) * COLS);
+    const ty = Math.floor(((e.clientY - rc.top) / rc.height) * ROWS);
+    let hit = null;
+    for (const it of LAYOUT.items) {
+      if (tx >= it.x && tx < it.x + it.w && (ty >= it.y && ty < it.y + it.h || TALL.includes(it.t) && ty === it.y - 1)) hit = it;
+    }
+    if (!hit) { sel = null; posHi(); return; }
+    if (LOCK.includes(hit.t)) { showToast("Это двигать нельзя: на нём держится игра 🔒"); return; }
+    sel = hit.sid === "tv" ? "tvs" : hit.k;
+    eHint.textContent = "Выбрано. Двигай стрелками 👇";
+    posHi();
+  }, true);
+  window.addEventListener("resize", posHi);
+  const editBtn = document.createElement("button");
+  editBtn.textContent = "🛋️ Двигать мебель";
+  editBtn.style.cssText = "border:none;border-radius:10px;background:#8fbf8f;color:#fff";
+  editBtn.onclick = () => setEdit(true);
+
   // меню: прячем лишние кнопки
   const menu = document.createElement("div");
   menu.style.cssText = "position:fixed;top:44px;right:8px;background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:8px;display:none;flex-direction:column;gap:6px;z-index:25;min-width:170px";
@@ -839,7 +944,7 @@
   menuBtn.textContent = "☰ Меню";
   menuBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#6b2d45;color:#fff;font-size:13px;padding:4px 10px";
   menuBtn.onclick = () => { menu.style.display = menu.style.display === "flex" ? "none" : "flex"; };
-  for (const b of [document.getElementById("inviteBtn"), shopBtn, qBtn, dBtn, planBtn, document.getElementById("themeBtn")]) {
+  for (const b of [document.getElementById("inviteBtn"), shopBtn, editBtn, qBtn, dBtn, planBtn, document.getElementById("themeBtn")]) {
     if (!b) continue;
     b.style.margin = "0";
     b.style.fontSize = "15px";
