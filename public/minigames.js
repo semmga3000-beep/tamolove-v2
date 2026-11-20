@@ -562,7 +562,95 @@
   const TYPES = [["human", "👤 Человек"], ["animal", "🐱 Зверёк"], ["ghost", "👻 Призрак"]];
   const STYLES = [["short", "Короткие"], ["long", "Длинные"], ["bun", "Пучок"]];
   const cur = () => looks[myRole];
+  // --- уход спать: идём к кровати по проходимым клеткам и ложимся ---
+  function bedSpot(role) {
+    const bed = LAYOUT.items.find((i) => i.t === "bed");
+    if (!bed) return null;
+    const fr = role === "caregiver" ? 0.3 : 0.7;
+    const wide = bed.w >= bed.h;
+    return { bed, x: bed.x + (wide ? bed.w * fr : bed.w / 2), y: bed.y + (wide ? bed.h / 2 : bed.h * fr) };
+  }
+  function findPath(sx, sy, bed) {
+    const blocked = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS || tileAt(tx, ty) === "#") return true;
+      return LAYOUT.items.some((i) => i.solid && tx >= i.x && tx < i.x + i.w && ty >= i.y && ty < i.y + i.h);
+    };
+    const near = (tx, ty) => tx >= bed.x - 1 && tx <= bed.x + bed.w && ty >= bed.y - 1 && ty <= bed.y + bed.h && !(tx >= bed.x && tx < bed.x + bed.w && ty >= bed.y && ty < bed.y + bed.h);
+    const st = [Math.floor(sx), Math.floor(sy)];
+    const key = (a) => a[0] + "," + a[1];
+    const prev = { [key(st)]: null };
+    const q = [st];
+    while (q.length) {
+      const cur = q.shift();
+      if (near(cur[0], cur[1]) && !blocked(cur[0], cur[1])) {
+        const pts = [];
+        for (let n = cur; n; n = prev[key(n)]) pts.unshift([n[0] + 0.5, n[1] + 0.5]);
+        return pts;
+      }
+      for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = [cur[0] + d[0], cur[1] + d[1]];
+        if (prev[key(nx)] !== undefined || blocked(nx[0], nx[1])) continue;
+        prev[key(nx)] = cur;
+        q.push(nx);
+      }
+    }
+    return null;
+  }
+  function sleepPrep(c, sleeping) {
+    const nowt = performance.now();
+    if (!sleeping || c !== partner) {
+      c._vx = c.x; c._vy = c.y; c._pth = null;
+      return null;
+    }
+    const sp = bedSpot(partnerRole);
+    if (!sp) return null;
+    if (!c._pth) {
+      c._srv = { x: c.tx !== undefined ? c.tx : c.x, y: c.ty !== undefined ? c.ty : c.y };
+      c._pi = 0; c._seg = 0; c._wt = nowt;
+      if (c._vx !== undefined && Math.hypot(c._vx - sp.x, c._vy - sp.y) > 1.5) {
+        c.x = c._vx; c.y = c._vy;
+        c._pth = findPath(c._vx, c._vy, sp.bed) || [];
+        c._pth.push([sp.x, sp.y]);
+      } else c._pth = [];
+      c._vx = undefined;
+    }
+    const dt = Math.min(0.1, (nowt - c._wt) / 1000);
+    c._wt = nowt;
+    let left = 3.2 * dt;
+    while (left > 0 && c._pi < c._pth.length) {
+      const tgt = c._pth[c._pi];
+      const dx = tgt[0] - c.x, dy = tgt[1] - c.y;
+      const dd = Math.hypot(dx, dy);
+      if (dd <= left) { c.x = tgt[0]; c.y = tgt[1]; left -= dd; c._pi++; }
+      else { c.x += (dx / dd) * left; c.y += (dy / dd) * left; left = 0; }
+      if (Math.abs(dx) > Math.abs(dy)) c.facing = dx > 0 ? "right" : "left"; else c.facing = dy > 0 ? "down" : "up";
+    }
+    if (c._pi < c._pth.length) { c.tx = c.x; c.ty = c.y; return { lying: false }; }
+    // пришёл: ложимся (для сортировки стоим у нижнего края кровати)
+    c.x = c._srv.x; c.y = c._srv.y; c.tx = c.x; c.ty = c.y;
+    return { lying: true, x: sp.x, y: sp.y };
+  }
+  function drawLying(look, sp) {
+    const type = look.type || "human";
+    const lx = Math.round(sp.x * T), ly = Math.round(sp.y * T);
+    const bob = Math.round(Math.sin(performance.now() / 700));
+    ctx.globalAlpha = type === "ghost" ? 0.85 : 1;
+    r(lx - 7, ly - 5, 7, 7, look.skin);
+    r(lx - 7, ly - 5, 7, 3, look.hair);
+    if (type === "animal") { r(lx - 7, ly - 8, 2, 3, look.skin); r(lx - 3, ly - 8, 2, 3, look.skin); }
+    r(lx - 5, ly - 1, 2, 1, "#222");
+    r(lx - 1, ly - 4, 10, 8, look.shirt);
+    r(lx - 1, ly - 4, 10, 1, "rgba(255,255,255,0.35)");
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 8px sans-serif";
+    ctx.fillText("z", lx + 7, ly - 8 + bob);
+    ctx.font = "bold 6px sans-serif";
+    ctx.fillText("z", lx + 12, ly - 13 + bob);
+  }
   drawCharacter = function (c, look, sleeping) {
+    const sl = sleepPrep(c, sleeping);
+    if (sl && sl.lying) { drawLying(look, sl); return; }
     const type = look.type || "human";
     const style = look.style || "short";
     const nowt = performance.now();
