@@ -180,8 +180,10 @@ function clamp(v) {
   return Math.max(0, Math.min(100, v));
 }
 
+let CUR = null; // дом, с которым сейчас работаем
 function near(p, zoneName) {
-  return ZONES[zoneName].some((z) => {
+  const flip = CUR && CUR.plan === 1;
+  return ZONES[zoneName].map((z) => (flip ? { x: 20 - z.x - z.w, y: z.y, w: z.w, h: z.h } : z)).some((z) => {
     const dx = Math.max(z.x - p.x, 0, p.x - (z.x + z.w));
     const dy = Math.max(z.y - p.y, 0, p.y - (z.y + z.h));
     return Math.hypot(dx, dy) <= REACH;
@@ -262,7 +264,7 @@ function makePlayer(id, role, name) {
   };
 }
 
-const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, tvs: 6, tv: 10 };
+const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, tvs: 6, tv: 10, arm: 7, aqua: 12, shelf: 8, pouf: 4, lamp3: 4 };
 
 function publicState(code) {
   const house = houses[code];
@@ -294,6 +296,7 @@ function publicState(code) {
       bowl: Math.round(house.bowl),
       coins: Math.round(house.coins),
       owned: house.owned || [],
+      plan: house.plan || 0,
       streak: { count: streakOf(house).count, broken: streakOf(house).broken, left: Math.max(0, 4 - streakOf(house).used) },
       quests: QUESTS.map((d) => {
         const q = qState(house);
@@ -519,7 +522,23 @@ wss.on("connection", (ws) => {
     } catch (e) {
       return;
     }
-    if (ws.house && houses[ws.house] && msg.type !== "move") touchStreak(houses[ws.house]);
+    CUR = ws.house && houses[ws.house] ? houses[ws.house] : null;
+    if (CUR && msg.type !== "move") touchStreak(CUR);
+
+    if (msg.type === "set_plan") {
+      if (!CUR) return;
+      const np = msg.plan === 1 ? 1 : 0;
+      if ((CUR.plan || 0) === np) return;
+      CUR.plan = np;
+      for (const rl of ROLES) {
+        const pp = CUR.players[rl];
+        if (pp) pp.x = 20 - pp.x;
+      }
+      for (const rl of ROLES) if (live[ws.house] && live[ws.house][rl]) send(live[ws.house][rl], { type: "toast", text: "Дом перестроен! 🏠✨" });
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
 
     if (msg.type === "dance_invite" || msg.type === "dance_answer" || msg.type === "dance_score") {
       const code = ws.house;
