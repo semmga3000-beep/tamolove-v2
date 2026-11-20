@@ -279,7 +279,8 @@ function publicState(code) {
         satiety: Math.round(p.satiety),
         energy: Math.round(p.energy),
         mood: Math.round(p.mood),
-        carrying: p.carrying
+        carrying: p.carrying,
+        look: p.look || null
       };
     }
   }
@@ -558,6 +559,23 @@ wss.on("connection", (ws) => {
       send(ws, { type: "toast", text: "Едите вместе! Вдвоём вкуснее ❤️🍽️" });
       if (rsock) send(rsock, { type: "toast", text: "Вы едите вместе! Вдвоём вкуснее ❤️🍽️" });
       markDirty(code, false);
+      broadcast(code);
+      return;
+    }
+
+    if (msg.type === "look") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const me = houses[code].players[ws.role];
+      const L = msg.look;
+      if (!me || !L || typeof L !== "object") return;
+      const hex = (v) => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
+      if (!["human", "animal", "ghost"].includes(L.type)) return;
+      if (!["short", "long", "bun"].includes(L.style)) return;
+      if (!hex(L.skin) || !hex(L.hair) || !hex(L.shirt) || !hex(L.pants)) return;
+      me.look = { type: L.type, style: L.style, skin: L.skin, hair: L.hair, shirt: L.shirt, pants: L.pants };
+      send(ws, { type: "toast", text: "Новый образ! ✨" });
+      markDirty(code, true);
       broadcast(code);
       return;
     }
