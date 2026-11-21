@@ -6,6 +6,7 @@ const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
 const { WebSocketServer } = require("ws");
+const monitor = require("./monitor");
 
 const app = express();
 app.use(express.static(path.join(__dirname, "public")));
@@ -117,6 +118,7 @@ process.on("SIGTERM", async () => {
   }
   try {
     await flush();
+    await monitor.save();
   } catch (e) {}
   process.exit(0);
 });
@@ -491,6 +493,7 @@ function attach(ws, code, role) {
   ws.house = code;
   ws.role = role;
   if (houses[code]) touchStreak(houses[code]);
+  try { monitor.seen(code, role); } catch (e) {}
   if (houses[code] && houses[code].players[role]) {
     const other = role === "caregiver" ? "receiver" : "caregiver";
     notifyOffline(code, other, "enter", houses[code].players[role].name + " зашёл(а) в дом 💞 Загляни!", 45 * 60 * 1000);
@@ -1226,8 +1229,10 @@ wss.on("connection", (ws) => {
 });
 
 // ---------- Запуск ----------
+monitor.setup(app, () => ({ pool, houses, live, GUESTS }));
 async function start() {
   await initStorage();
+  await monitor.load();
   for (const code of Object.keys(houses)) ensureHouse(houses[code]);
   const PORT = process.env.PORT || 3000;
   server.listen(PORT, () => {
