@@ -776,6 +776,22 @@ wss.on("connection", (ws) => {
       broadcast(code);
       return;
     }
+    if (msg.type === "chat") {
+      const code = ws.visiting || ws.house;
+      const text = String(msg.text || "").trim().slice(0, 200);
+      if (!code || !houses[code] || !text) return;
+      const now = Date.now();
+      if (ws.lastChat && now - ws.lastChat < 700) return;
+      ws.lastChat = now;
+      let nm = "?";
+      const me = ws.house && houses[ws.house] && houses[ws.house].players[ws.role];
+      if (me) nm = me.name;
+      const m = JSON.stringify({ type: "chat", name: nm, text, guest: !!ws.visiting });
+      if (live[code]) for (const role of ROLES) { const k = live[code][role]; if (k && k.readyState === 1) k.send(m); }
+      const gs = GUESTS[code];
+      if (gs) for (const id of Object.keys(gs)) if (gs[id].ws.readyState === 1) gs[id].ws.send(m);
+      return;
+    }
     if (msg.type === "leave_visit") {
       leaveVisit(ws);
       send(ws, { type: "visit_end" });
