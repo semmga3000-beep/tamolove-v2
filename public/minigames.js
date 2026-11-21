@@ -1739,12 +1739,16 @@
   // ---------- Чат дома ----------
   const chatLog = [];
   const cb = document.createElement("div");
-  cb.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:55;font-family:sans-serif";
-  cb.innerHTML = '<div id="cLog" style="display:none;width:260px;max-height:160px;overflow-y:auto;background:rgba(40,20,30,.85);color:#fff;font-size:13px;border-radius:10px;padding:6px;margin-bottom:4px"></div>' +
-    '<div id="cRow" style="display:none;gap:4px"><input id="cIn" maxlength="200" placeholder="Сообщение…" style="width:190px;font-size:16px;border-radius:8px;border:none;padding:6px"><button id="cSend" style="border:none;border-radius:8px;background:#6fa8ff;color:#fff;padding:6px 10px">➤</button></div>' +
-    '<button id="cBtn" style="border:none;border-radius:50%;width:40px;height:40px;background:#6b2d45;color:#fff;font-size:20px">💬</button>';
+  cb.style.cssText = "position:fixed;left:8px;right:8px;top:64px;z-index:55;font-family:sans-serif;pointer-events:none";
+  cb.innerHTML = '<div id="cLog" style="display:none;width:100%;box-sizing:border-box;max-height:170px;pointer-events:auto;overflow-y:auto;background:rgba(40,20,30,.85);color:#fff;font-size:13px;border-radius:10px;padding:6px;margin-bottom:4px"></div>' +
+    '<div id="cRow" style="display:none;gap:4px;pointer-events:auto"><input id="cIn" maxlength="200" placeholder="Сообщение…" style="flex:1;min-width:0;font-size:16px;border-radius:8px;border:none;padding:6px"><button id="cSend" style="border:none;border-radius:8px;background:#6fa8ff;color:#fff;padding:6px 10px">➤</button></div>' +
+    '';
   document.body.appendChild(cb);
-  const cLog = cb.querySelector("#cLog"), cRow = cb.querySelector("#cRow"), cIn = cb.querySelector("#cIn"), cBtn = cb.querySelector("#cBtn");
+  const cLog = cb.querySelector("#cLog"), cRow = cb.querySelector("#cRow"), cIn = cb.querySelector("#cIn");
+  const cBtn = document.createElement("button");
+  cBtn.textContent = "💬";
+  cBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#6b2d45;color:#fff;font-size:13px;padding:4px 10px";
+  { const tp = document.querySelector("#top, .top, header") || menuBtn.parentNode; tp.appendChild(cBtn); }
   let cOpen = false;
   function renderChat() {
     cLog.innerHTML = "";
