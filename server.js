@@ -344,6 +344,7 @@ function publicState(code) {
       plan: house.plan || 0,
       moved: house.moved || {},
       paint: house.paint || { wall: null, floor: null },
+      guests: guestList(code),
       friends: (house.friends || []).map(friendInfo).filter(Boolean),
       requests: Object.keys(house.fr_in || {}).map((c) => ({ code: c, label: houses[c] ? houseLabel(houses[c]) : "Дом" })),
       ach: ACH.map((a) => ({ id: a.id, n: a.n, p: Math.min(a.t, statVal(house, a.s)), t: a.t, r: a.r, d: !!(house.ach && house.ach[a.id]) })),
@@ -356,12 +357,37 @@ function publicState(code) {
   };
 }
 
+const GUESTS = {}; // гости: код дома -> { id: {ws, name, look, x, y, facing} }
+let gidCounter = 0;
+function guestList(code) {
+  const g = GUESTS[code] || {};
+  return Object.keys(g).map((id) => ({ id, name: g[id].name, look: g[id].look, x: g[id].x, y: g[id].y, facing: g[id].facing }));
+}
+function leaveVisit(ws) {
+  const code = ws.visiting;
+  if (!code) return;
+  ws.visiting = null;
+  const g = GUESTS[code] && GUESTS[code][ws.gid];
+  if (GUESTS[code]) delete GUESTS[code][ws.gid];
+  if (houses[code] && g) {
+    notifyHouse(houses[code], g.name + " ушёл(ла) домой 👋");
+    broadcast(code);
+  }
+}
 function broadcast(code) {
-  if (!houses[code] || !live[code]) return;
-  const msg = JSON.stringify(publicState(code));
-  for (const role of ROLES) {
-    const sock = live[code][role];
-    if (sock && sock.readyState === 1) sock.send(msg);
+  if (!houses[code]) return;
+  const st = publicState(code);
+  const msg = JSON.stringify(st);
+  if (live[code]) {
+    for (const role of ROLES) {
+      const sock = live[code][role];
+      if (sock && sock.readyState === 1) sock.send(msg);
+    }
+  }
+  const gs = GUESTS[code];
+  if (gs) {
+    const m2 = JSON.stringify({ type: "visit_state", state: st });
+    for (const id of Object.keys(gs)) if (gs[id].ws.readyState === 1) gs[id].ws.send(m2);
   }
 }
 
@@ -729,7 +755,44 @@ wss.on("connection", (ws) => {
       return;
     }
     CUR = ws.house && houses[ws.house] ? houses[ws.house] : null;
-    if (CUR && msg.type !== "move") touchStreak(CUR);
+    if (CUR && msg.type !== "move" && !ws.visiting) touchStreak(CUR);
+
+    if (msg.type === "visit") {
+      const me = ws.house && houses[ws.house];
+      const code = String(msg.code || "").trim().toUpperCase();
+      const th = houses[code];
+      if (!me || !th || !(th.friends || []).includes(ws.house)) { send(ws, { type: "toast", text: "Этот дом не в друзьях" }); return; }
+      leaveVisit(ws);
+      if (!GUESTS[code]) GUESTS[code] = {};
+      if (Object.keys(GUESTS[code]).length >= 4) { send(ws, { type: "toast", text: "В доме уже много гостей" }); return; }
+      const p = me.players[ws.role];
+      if (!p) return;
+      const base = th.plan === 2 ? SPAWN2.receiver : th.plan === 1 ? { x: 20 - SPAWN.receiver.x, y: SPAWN.receiver.y } : SPAWN.receiver;
+      ws.gid = String(++gidCounter);
+      ws.visiting = code;
+      GUESTS[code][ws.gid] = { ws, name: p.name, look: p.look || null, x: base.x, y: base.y, facing: "down" };
+      send(ws, { type: "visit_ok", code, gid: ws.gid, label: houseLabel(th), x: base.x, y: base.y });
+      notifyHouse(th, p.name + " зашёл(ла) в гости 🎉");
+      broadcast(code);
+      return;
+    }
+    if (msg.type === "leave_visit") {
+      leaveVisit(ws);
+      send(ws, { type: "visit_end" });
+      return;
+    }
+    if (ws.visiting) {
+      if (msg.type === "move") {
+        const g = GUESTS[ws.visiting] && GUESTS[ws.visiting][ws.gid];
+        const x = Number(msg.x), y = Number(msg.y);
+        if (!g || !isFinite(x) || !isFinite(y)) return;
+        g.x = Math.min(19.5, Math.max(0.5, x));
+        g.y = Math.min(13.5, Math.max(0.5, y));
+        if (["up", "down", "left", "right"].includes(msg.facing)) g.facing = msg.facing;
+        broadcast(ws.visiting);
+      }
+      return;
+    }
 
     if (msg.type === "move_item" || msg.type === "reset_layout") {
       if (!CUR) return;
@@ -1101,6 +1164,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    leaveVisit(ws);
     const code = ws.house;
     if (code && live[code] && live[code][ws.role] === ws) {
       delete live[code][ws.role];
