@@ -288,6 +288,7 @@
   }
   function tryStart() {
     if (game) return true;
+    if (window.TLVisit) { showToast("В гостях можно только гулять 🚶"); return true; }
     if (wantStove()) { startCook(); return true; }
     if (wantClean()) { startScrub(); return true; }
     if (typeof wantSit === "function" && wantSit()) { sendMsg({ type: "ask_sit" }); return true; }
@@ -528,6 +529,10 @@
       const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id, k: c.id }, c.it, curPlan === 2 && c.it2 ? c.it2 : {});
       pose(it, moved[keyOf(c.id === "tv" ? "tvs" : c.id)]);
       LAYOUT.items.push(it);
+    }
+    if (typeof NPCS !== "undefined") {
+      LAYOUT.items = LAYOUT.items.filter((i) => i.t !== "npc");
+      for (const id of Object.keys(NPCS)) LAYOUT.items.push(NPCS[id].item);
     }
   }
   const shopBtn = document.createElement("button");
@@ -1638,7 +1643,7 @@
     h2.innerHTML = "<b>Мои друзья</b>" + (fr.friends.length ? "" : "<br><small>Пока никого. Введи код дома друзей ниже.</small>");
     h2.style.margin = "8px 0 2px";
     box.appendChild(h2);
-    for (const f of fr.friends) mk((f.online ? "🟢 " : "⚪ ") + f.label + " · " + f.code, [["Убрать", "#c9b0b8", () => sendMsg({ type: "friend_remove", code: f.code })]]);
+    for (const f of fr.friends) mk((f.online ? "🟢 " : "⚪ ") + f.label + " · " + f.code, [["В гости", "#7ed08a", () => { frBox.style.display = "none"; sendMsg({ type: "visit", code: f.code }); }], ["✕", "#c9b0b8", () => sendMsg({ type: "friend_remove", code: f.code })]]);
   }
   const frBtn = document.createElement("button");
   frBtn.textContent = "👥 Друзья";
@@ -1659,6 +1664,75 @@
       frBtn.textContent = "👥 Друзья" + (fr.requests.length ? " (" + fr.requests.length + ")" : "");
       if (frBox.style.display === "flex") renderFr();
     }
+  };
+
+
+  // ---------- Гости: чужие герои как «npc» и режим похода в гости ----------
+  const NPCS = {};
+  const FALLBACK_LOOK = { type: "human", style: "short", skin: "#f5c9a0", hair: "#5a3825", shirt: "#6fa8ff", pants: "#4a5a8a" };
+  function setNpcs(prefix, list, skipId) {
+    const keep = {};
+    for (const d of list) {
+      if (d.id === skipId) continue;
+      const id = prefix + d.id;
+      keep[id] = true;
+      let n = NPCS[id];
+      if (!n) {
+        n = NPCS[id] = { c: { x: d.x, y: d.y, tx: d.x, ty: d.y, facing: d.facing || "down" }, item: { t: "npc", id, k: "npc_" + id, x: d.x, y: d.y, w: 1, h: 0.4, solid: false } };
+      }
+      n.c.tx = d.x; n.c.ty = d.y; n.c.facing = d.facing || "down";
+      n.look = d.look || FALLBACK_LOOK; n.name = d.name; n.online = d.online !== false; n.role = d.role || null;
+    }
+    for (const id of Object.keys(NPCS)) if (id.startsWith(prefix) && !keep[id]) delete NPCS[id];
+    syncOwned();
+  }
+  SPR.npc = (x, y, w, h, it) => {
+    const n = NPCS[it.id];
+    if (!n) return;
+    if (!n.online && n.role) {
+      const sp = bedSpot(n.role);
+      if (sp) { drawLying(n.look, sp); return; }
+    }
+    drawCharacter(n.c, n.look, false);
+    drawName(n.c, n.name || "Гость", false);
+  };
+  (function loop() {
+    for (const id of Object.keys(NPCS)) {
+      const n = NPCS[id], c = n.c;
+      c.x += (c.tx - c.x) * 0.25; c.y += (c.ty - c.y) * 0.25;
+      n.item.x = c.x; n.item.y = c.y - 0.025;
+    }
+    requestAnimationFrame(loop);
+  })();
+  let visiting = null, myGid = null;
+  const vb = document.createElement("div");
+  vb.style.cssText = "position:fixed;left:0;right:0;top:0;background:#6fa8ff;color:#fff;font-size:14px;font-weight:bold;padding:8px;text-align:center;z-index:60;display:none";
+  document.body.appendChild(vb);
+  const prevH15 = handleMessage;
+  handleMessage = function (msg) {
+    if (msg && msg.type === "visit_ok") {
+      visiting = msg.code; myGid = msg.gid; window.TLVisit = true;
+      vb.innerHTML = '🏡 Ты в гостях: ' + msg.label + ' <button id="vHome" style="margin-left:8px;border:none;border-radius:8px;background:#fff;color:#3a6fb0;font-size:13px;padding:4px 10px">Домой</button>';
+      vb.style.display = "block";
+      document.getElementById("vHome").onclick = () => sendMsg({ type: "leave_visit" });
+      player.x = msg.x; player.y = msg.y;
+      for (const id of Object.keys(NPCS)) delete NPCS[id];
+      return;
+    }
+    if (msg && msg.type === "visit_end") { location.reload(); return; }
+    if (visiting) {
+      if (msg && msg.type === "visit_state") {
+        const st = msg.state, H = st.house || {};
+        prevH15({ type: "state", code: st.code, players: {}, house: { clean: H.clean, bowl: H.bowl, plan: H.plan, moved: H.moved, owned: H.owned, paint: H.paint } });
+        const list = [];
+        for (const rl of ["caregiver", "receiver"]) { const p = st.players && st.players[rl]; if (p) list.push(Object.assign({ id: rl, role: rl }, p)); }
+        setNpcs("r_", list);
+        setNpcs("g_", st.guests || [], myGid);
+      } else if (msg && msg.type === "toast") prevH15(msg);
+      return;
+    }
+    prevH15(msg);
+    if (msg && msg.type === "state" && Array.isArray(msg.guests)) setNpcs("g_", msg.guests);
   };
 
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
