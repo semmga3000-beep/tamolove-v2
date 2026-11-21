@@ -1579,5 +1579,32 @@
     prevH12(msg);
   };
 
+
+  // ---------- Выйти из дома ----------
+  const lv = document.createElement("div");
+  lv.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:45;align-items:center;justify-content:center";
+  lv.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:16px;width:90%;max-width:330px;text-align:center;color:#6b2d45"><div style="font-size:36px">🚪</div><b style="font-size:17px">Выйти из дома насовсем?</b><p style="font-size:14px">Ты покинешь этот дом, а второй участник останется. Вернуться можно только если он снова пригласит тебя по коду.</p><button id="lvYes" style="width:100%;border:none;border-radius:12px;background:#e0504f;color:#fff;font-size:16px;padding:12px">Да, выйти</button><button id="lvNo" style="width:100%;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:12px;margin-top:8px">Остаться</button></div>';
+  document.body.appendChild(lv);
+  lv.querySelector("#lvNo").onclick = () => { lv.style.display = "none"; };
+  lv.querySelector("#lvYes").onclick = () => { sendMsg({ type: "leave_house" }); lv.style.display = "none"; };
+  const lvBtn = document.createElement("button");
+  lvBtn.textContent = "🚪 Выйти из дома";
+  lvBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#c9707a;color:#fff";
+  lvBtn.onclick = () => { lv.style.display = "flex"; menu.style.display = "none"; };
+  menu.appendChild(lvBtn);
+  const prevH13 = handleMessage;
+  handleMessage = function (msg) {
+    if (msg && msg.type === "left") {
+      try { localStorage.removeItem("tamolove_code"); } catch (e) {}
+      location.reload();
+      return;
+    }
+    prevH13(msg);
+    if (msg && msg.type === "state" && msg.players && partnerRole && !msg.players[partnerRole]) {
+      partner.present = false;
+      partnerInfo.textContent = "Ждём второго игрока";
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
