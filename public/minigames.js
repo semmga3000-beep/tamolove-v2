@@ -1728,7 +1728,7 @@
         for (const rl of ["caregiver", "receiver"]) { const p = st.players && st.players[rl]; if (p) list.push(Object.assign({ id: rl, role: rl }, p)); }
         setNpcs("r_", list);
         setNpcs("g_", H.guests || [], myGid);
-      } else if (msg && msg.type === "toast") prevH15(msg);
+      } else if (msg && (msg.type === "toast" || msg.type === "dance_invite" || msg.type === "dance_start" || msg.type === "dance_end")) prevH15(msg);
       return;
     }
     prevH15(msg);
