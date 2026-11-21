@@ -847,6 +847,26 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    if (msg.type === "leave_house") {
+      const code = ws.house, role = ws.role;
+      if (!code || !houses[code]) return;
+      const house = houses[code];
+      const name = (house.players[role] || {}).name || "Игрок";
+      delete house.players[role];
+      if (live[code]) delete live[code][role];
+      ws.house = null;
+      ws.role = null;
+      send(ws, { type: "left" });
+      const rest = ROLES.filter((r) => house.players[r]);
+      if (!rest.length) delete houses[code];
+      else {
+        notifyHouse(house, name + " вышел(ла) из дома 👋 Теперь можно пригласить нового человека по коду");
+        markDirty(code, true);
+        broadcast(code);
+      }
+      return;
+    }
+
     if (msg.type === "create") {
       const playerId = String(msg.playerId || "");
       if (!playerId || !ROLES.includes(msg.role)) return;
