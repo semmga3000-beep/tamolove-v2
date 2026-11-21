@@ -611,7 +611,9 @@ function finishDance(code, d) {
   const house = houses[code];
   if (!house || house.dance !== d || d.state !== "play") return;
   d.state = "done";
-  const team = (d.scores.caregiver || 0) + (d.scores.receiver || 0);
+  const keys = ["caregiver", "receiver"].concat(d.joined || []);
+  const total = keys.reduce((a, k) => a + (d.scores[k] || 0), 0);
+  const team = Math.round(total * 2 / keys.length);
   let coins = team >= 56 ? 5 : team >= 44 ? 4 : team >= 30 ? 3 : team >= 16 ? 2 : 1;
   if (house.danceAt && Date.now() - house.danceAt < 120000) coins = 0;
   house.danceAt = Date.now();
@@ -621,8 +623,10 @@ function finishDance(code, d) {
     if (p) p.mood = clamp(p.mood + 6 + Math.round(team / 8));
   }
   const q = qAdd(house, "dance", 1);
-  const text = "Танец окончен! Очки " + team + "/64" + (coins ? " +" + coins + " 🪙" : " (монеты раз в 2 мин)") + q;
+  const text = "Танец окончен! Очки " + team + "/64" + (keys.length > 2 ? " (с гостями 🎉)" : "") + (coins ? " +" + coins + " 🪙" : " (монеты раз в 2 мин)") + q;
   for (const rl of ROLES) if (live[code] && live[code][rl]) send(live[code][rl], { type: "dance_end", text });
+  const gs = GUESTS[code];
+  if (gs) for (const id of (d.joined || [])) { const g = gs[id.slice(1)]; if (g) send(g.ws, { type: "dance_end", text }); }
   markDirty(code, true);
   broadcast(code);
 }
@@ -797,6 +801,17 @@ wss.on("connection", (ws) => {
       send(ws, { type: "visit_end" });
       return;
     }
+    if (ws.visiting && (msg.type === "dance_answer" || msg.type === "dance_score")) {
+      const hh = houses[ws.visiting], d = hh && hh.dance, key = "g" + ws.gid;
+      if (!d || d.state !== "play" || !d.joined) return;
+      if (msg.type === "dance_answer") {
+        if (msg.ok && !d.joined.includes(key) && Date.now() - d.at < 12000) { d.joined.push(key); send(ws, { type: "dance_start", seed: d.seed }); }
+      } else if (d.joined.includes(key)) {
+        d.scores[key] = Math.max(0, Math.min(32, Math.floor(Number(msg.hits) || 0)));
+        if (["caregiver", "receiver"].concat(d.joined).every((k) => d.scores[k] !== undefined)) finishDance(ws.visiting, d);
+      }
+      return;
+    }
     if (ws.visiting) {
       if (msg.type === "move") {
         const g = GUESTS[ws.visiting] && GUESTS[ws.visiting][ws.gid];
@@ -903,14 +918,17 @@ wss.on("connection", (ws) => {
         d.state = "play";
         d.at = Date.now();
         const seed = Math.floor(Math.random() * 1e9);
+        d.seed = seed; d.joined = [];
         for (const rl of ROLES) if (live[code][rl]) send(live[code][rl], { type: "dance_start", seed });
+        const gs0 = GUESTS[code];
+        if (gs0) for (const id of Object.keys(gs0)) send(gs0[id].ws, { type: "dance_invite", name: "Хозяин", guest: true });
         setTimeout(() => finishDance(code, d), 40000);
         return;
       }
       if (msg.type === "dance_score") {
         if (d.state !== "play") return;
         d.scores[ws.role] = Math.max(0, Math.min(32, Math.floor(Number(msg.hits) || 0)));
-        if (d.scores.caregiver !== undefined && d.scores.receiver !== undefined) finishDance(code, d);
+        if (["caregiver", "receiver"].concat(d.joined || []).every((k) => d.scores[k] !== undefined)) finishDance(code, d);
         return;
       }
     }
