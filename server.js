@@ -1,6 +1,7 @@
 const express = require("express");
 const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 const { Pool } = require("pg");
@@ -379,6 +380,63 @@ function tgSend(chatId, text) {
     req.end();
   } catch (e) {}
 }
+function tgApi(method, payload, cb) {
+  if (!BOT_TOKEN) { if (cb) cb(null); return; }
+  const body = JSON.stringify(payload);
+  try {
+    const req = https.request({ hostname: "api.telegram.org", path: "/bot" + BOT_TOKEN + "/" + method, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } }, (res) => {
+      let d = "";
+      res.on("data", (c) => (d += c));
+      res.on("end", () => { if (cb) { try { cb(JSON.parse(d)); } catch (e) { cb(null); } } });
+    });
+    req.on("error", () => { if (cb) cb(null); });
+    req.setTimeout(8000, () => req.destroy());
+    req.write(body);
+    req.end();
+  } catch (e) { if (cb) cb(null); }
+}
+
+// ---------- Покупка монет за звёзды Telegram ----------
+const PACKS = { p15: { stars: 15, coins: 30 }, p50: { stars: 50, coins: 110 }, p100: { stars: 100, coins: 240 } };
+const HOOK_SECRET = crypto.createHash("sha256").update(BOT_TOKEN || "none").digest("hex").slice(0, 32);
+app.post("/tg-webhook", express.json(), (req, res) => {
+  res.sendStatus(200);
+  if (!BOT_TOKEN || req.headers["x-telegram-bot-api-secret-token"] !== HOOK_SECRET) return;
+  const u = req.body || {};
+  try {
+    if (u.pre_checkout_query) {
+      const q = u.pre_checkout_query;
+      const parts = String(q.invoice_payload || "").split(":");
+      const ok = q.currency === "XTR" && parts.length === 3 && houses[parts[0]] && PACKS[parts[2]] && q.total_amount === PACKS[parts[2]].stars;
+      tgApi("answerPreCheckoutQuery", ok ? { pre_checkout_query_id: q.id, ok: true } : { pre_checkout_query_id: q.id, ok: false, error_message: "Не получилось, попробуй ещё раз" });
+      return;
+    }
+    const m = u.message;
+    if (!m) return;
+    if (m.successful_payment) {
+      const sp = m.successful_payment;
+      const parts = String(sp.invoice_payload || "").split(":");
+      const house = houses[parts[0]];
+      const pack = PACKS[parts[2]];
+      if (!house || !pack || sp.currency !== "XTR" || sp.total_amount !== pack.stars) return;
+      if (!house.payments) house.payments = [];
+      if (house.payments.some((p) => p.id === sp.telegram_payment_charge_id)) return;
+      house.payments.push({ id: sp.telegram_payment_charge_id, pack: parts[2], stars: pack.stars, at: Date.now(), by: parts[1] });
+      house.coins += pack.coins;
+      notifyHouse(house, "Спасибо! +" + pack.coins + " 🪙 ❤️");
+      markDirty(parts[0], true);
+      broadcast(parts[0]);
+      return;
+    }
+    const txt = String(m.text || "");
+    if (txt.startsWith("/paysupport")) tgApi("sendMessage", { chat_id: m.chat.id, text: process.env.PAY_SUPPORT_TEXT || "Если с оплатой что-то пошло не так, напиши создателю игры, и он всё исправит или вернёт звёзды." });
+    else if (txt.startsWith("/start")) tgApi("sendMessage", { chat_id: m.chat.id, text: "Привет! Это TamoLove: уютный дом для двоих ❤️", reply_markup: { inline_keyboard: [[{ text: "Открыть дом 🏠", url: "https://t.me/TamoLoveGameBot" }]] } });
+  } catch (e) {}
+});
+if (BOT_TOKEN && process.env.RENDER_EXTERNAL_URL) {
+  tgApi("setWebhook", { url: process.env.RENDER_EXTERNAL_URL + "/tg-webhook", secret_token: HOOK_SECRET, allowed_updates: ["message", "pre_checkout_query"] }, (r) => console.log("webhook:", r && r.ok ? "ok" : "ошибка"));
+}
+
 function notifyOffline(code, role, kind, text, cooldownMs) {
   const house = houses[code];
   const p = house && house.players[role];
@@ -671,6 +729,18 @@ wss.on("connection", (ws) => {
       }
       markDirty(ws.house, true);
       broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "buy_coins") {
+      const pk = PACKS[msg.pack];
+      if (!CUR || !pk) return;
+      if (!BOT_TOKEN) { send(ws, { type: "toast", text: "Оплата пока не настроена" }); return; }
+      const wsRef = ws, codeRef = ws.house, roleRef = ws.role, key = msg.pack;
+      tgApi("createInvoiceLink", { title: pk.coins + " монет", description: "Монеты для дома TamoLove", payload: codeRef + ":" + roleRef + ":" + key, provider_token: "", currency: "XTR", prices: [{ label: pk.coins + " монет", amount: pk.stars }] }, (r) => {
+        if (r && r.ok && r.result) send(wsRef, { type: "invoice", url: r.result });
+        else send(wsRef, { type: "toast", text: "Не получилось создать счёт 😔" });
+      });
       return;
     }
 
