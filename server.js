@@ -1,1789 +1,1219 @@
-// Мини-игры: готовка (поймать момент) и уборка (оттереть пятна).
-// Этот файл работает вместе с game.js и ничего в нём не ломает.
-(function () {
-  // ---------- Окно мини-игры ----------
-  const css = document.createElement("style");
-  css.textContent =
-    "#mini{position:fixed;inset:0;background:rgba(60,20,40,.55);display:none;align-items:center;justify-content:center;z-index:20;touch-action:none}" +
-    "#mini.show{display:flex}" +
-    "#miniCard{background:#fff8f0;border:3px solid #6b2d45;border-radius:16px;padding:12px;width:min(92vw,360px);text-align:center;color:#6b2d45;font-family:sans-serif}" +
-    "#miniTitle{font-weight:bold;font-size:18px;margin-bottom:6px}" +
-    "#miniCanvas{width:100%;background:#fdebd0;border-radius:10px;touch-action:none;display:block}" +
-    "#miniHint{font-size:14px;margin:6px 0;min-height:38px}" +
-    ".miniBtn{width:100%;border:none;border-radius:14px;background:#ff6f91;color:#fff;font-size:20px;font-weight:bold;padding:14px;margin-top:6px}" +
-    ".miniBtn:active{background:#e0668f}" +
-    "#miniClose{background:#c9a0b0;font-size:14px;padding:8px}";
-  document.head.appendChild(css);
+const express = require("express");
+const http = require("http");
+const https = require("https");
+const crypto = require("crypto");
+const path = require("path");
+const fs = require("fs");
+const { Pool } = require("pg");
+const { WebSocketServer } = require("ws");
 
-  const box = document.createElement("div");
-  box.id = "mini";
-  box.innerHTML =
-    '<div id="miniCard"><div id="miniTitle"></div>' +
-    '<canvas id="miniCanvas" width="300" height="180"></canvas>' +
-    '<div id="miniHint"></div>' +
-    '<button class="miniBtn" id="miniGo">Стоп!</button>' +
-    '<button class="miniBtn" id="miniClose">Закрыть</button></div>';
-  document.body.appendChild(box);
+const app = express();
+app.use(express.static(path.join(__dirname, "public")));
 
-  const mc = document.getElementById("miniCanvas");
-  const m = mc.getContext("2d");
-  const titleEl = document.getElementById("miniTitle");
-  const hintEl = document.getElementById("miniHint");
-  const goBtn = document.getElementById("miniGo");
-  const closeBtn = document.getElementById("miniClose");
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
-  let game = null;
-  let raf = 0;
+// ---------- Хранение домов ----------
+const DATA_DIR = path.join(__dirname, "data");
+const DATA_FILE = path.join(DATA_DIR, "houses.json");
+let houses = {};
+let pool = null;
+let storageInfo = "файл (база не подключена, данные могут пропасть)";
 
-  function open(title, hint, showGo) {
-    titleEl.textContent = title;
-    hintEl.textContent = hint;
-    goBtn.style.display = showGo ? "block" : "none";
-    box.classList.add("show");
-  }
-  function close() {
-    game = null;
-    cancelAnimationFrame(raf);
-    box.classList.remove("show");
-  }
-  closeBtn.addEventListener("click", close);
+// Достаём чистую ссылку, даже если скопировалось лишнее (psql '...' и т.п.)
+function cleanDbUrl(raw) {
+  const m = String(raw).match(/postgres(?:ql)?:\/\/[^\s'"]+/);
+  let url = m ? m[0] : String(raw).trim();
+  try {
+    const u = new URL(url);
+    u.searchParams.delete("channel_binding");
+    url = u.toString();
+  } catch (e) {}
+  return url;
+}
 
-  // ---------- Монеты ----------
-  const coinsEl = document.createElement("span");
-  coinsEl.style.marginLeft = "6px";
-  coinsEl.textContent = "🪙 0";
-  const top = document.getElementById("top");
-  if (top) top.appendChild(coinsEl);
-
-  const oldHandle = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "state" && msg.house && typeof msg.house.coins === "number") {
-      coinsEl.textContent = "🪙 " + msg.house.coins;
-    }
-    oldHandle(msg);
-  };
-
-  // ---------- Готовка: поймай момент ----------
-  const ZONE_W = [86, 64, 46];
-  const SPEED = [190, 250, 320];
-  const BAR_X = 20;
-  const BAR_W = 260;
-
-  function newRound(g) {
-    const w = ZONE_W[g.round];
-    g.zoneW = w;
-    g.zoneC = BAR_X + w / 2 + Math.random() * (BAR_W - w);
-    g.pos = BAR_X;
-    g.dir = 1;
-    g.wait = 0;
-  }
-
-  function startCook() {
-    game = { kind: "cook", round: 0, scores: [], done: false, msg: "" };
-    newRound(game);
-    open("🍳 Приготовь еду", "Нажимай «Стоп!», когда ложка в зелёной зоне. Три раунда.", true);
-    loop(performance.now());
-  }
-
-  function cookStop() {
-    const g = game;
-    if (!g || g.kind !== "cook" || g.done || g.wait > 0) return;
-    const d = Math.abs(g.pos - g.zoneC);
-    const ratio = d / (g.zoneW / 2);
-    const s = ratio <= 1 ? 100 - 30 * ratio : Math.max(0, 70 - (ratio - 1) * 35);
-    g.scores.push(s);
-    g.msg = s >= 80 ? "Отлично! 🌟" : s >= 50 ? "Хорошо 👍" : "Мимо 😅";
-    hintEl.textContent = g.msg;
-    g.wait = 0.7;
-    if (g.scores.length >= 3) {
-      g.done = true;
-      const avg = g.scores.reduce((a, b) => a + b, 0) / 3;
-      hintEl.textContent = avg >= 80 ? "Шедевр! 🌟" : avg >= 50 ? "Вкусно получилось! 😋" : "Немного подгорело 😅";
-      sendMsg({ type: "cook", score: Math.round(avg) });
-      setTimeout(close, 1500);
-    }
-  }
-  goBtn.addEventListener("click", cookStop);
-
-  function drawCook(g) {
-    m.clearRect(0, 0, 300, 180);
-    m.fillStyle = "#fdebd0";
-    m.fillRect(0, 0, 300, 180);
-    // кастрюля и пар
-    m.font = "44px sans-serif";
-    m.textAlign = "center";
-    m.fillText("🍲", 150, 150);
-    const t = performance.now() / 400;
-    m.font = "18px sans-serif";
-    m.fillText("♨", 130 + Math.sin(t) * 6, 100 - ((t * 10) % 14));
-    m.fillText("♨", 170 + Math.cos(t) * 6, 100 - ((t * 8) % 14));
-    // шкала
-    m.fillStyle = "#e7c9a4";
-    m.fillRect(BAR_X, 40, BAR_W, 22);
-    m.fillStyle = "#6fcf6f";
-    m.fillRect(g.zoneC - g.zoneW / 2, 40, g.zoneW, 22);
-    m.strokeStyle = "#6b2d45";
-    m.lineWidth = 2;
-    m.strokeRect(BAR_X, 40, BAR_W, 22);
-    // ложка
-    m.font = "24px sans-serif";
-    m.fillText("🥄", g.pos, 34);
-    // раунды
-    m.fillStyle = "#6b2d45";
-    m.font = "bold 14px sans-serif";
-    m.fillText("Раунд " + Math.min(3, g.round + 1) + " из 3", 150, 20);
-  }
-
-  // ---------- Уборка: оттирай пятна пальцем ----------
-  function startScrub() {
-    const spots = [];
-    for (let i = 0; i < 6; i++) {
-      for (let tries = 0; tries < 40; tries++) {
-        const r = 20 + Math.random() * 7;
-        const x = 30 + Math.random() * 240;
-        const y = 40 + Math.random() * 120;
-        if (spots.every((s) => Math.hypot(s.x - x, s.y - y) > s.r + r + 4)) {
-          spots.push({ x, y, r, hp: 1 });
-          break;
-        }
-      }
-    }
-    game = { kind: "scrub", spots, left: 20, down: false, lx: 0, ly: 0, px: -50, py: -50, done: false };
-    open("🧹 Уборка", "Води пальцем по пятнам, чтобы оттереть их. Время ограничено.", false);
-    loop(performance.now());
-  }
-
-  function cleanedCount(g) {
-    return g.spots.filter((s) => s.hp <= 0).length;
-  }
-
-  function finishScrub() {
-    const g = game;
-    if (!g || g.done) return;
-    g.done = true;
-    const n = cleanedCount(g);
-    hintEl.textContent = n >= 6 ? "Блестит! ✨" : n > 0 ? "Оттёр пятен: " + n : "Ничего не вышло, попробуй ещё";
-    sendMsg({ type: "clean", spots: n });
-    setTimeout(close, 1400);
-  }
-
-  function pointerPos(e) {
-    const rc = mc.getBoundingClientRect();
-    return [((e.clientX - rc.left) * 300) / rc.width, ((e.clientY - rc.top) * 180) / rc.height];
-  }
-  mc.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    const g = game;
-    if (!g) return;
-    if (g.kind === "cook") {
-      cookStop();
+async function initStorage() {
+  if (process.env.DATABASE_URL) {
+    try {
+      pool = new Pool({
+        connectionString: cleanDbUrl(process.env.DATABASE_URL),
+        ssl: { rejectUnauthorized: false },
+        max: 3,
+        idleTimeoutMillis: 10000,
+        connectionTimeoutMillis: 10000
+      });
+      pool.on("error", (e) => console.log("Ошибка соединения с базой:", e.message));
+      await pool.query(
+        "CREATE TABLE IF NOT EXISTS houses (" +
+          "code TEXT PRIMARY KEY, " +
+          "data JSONB NOT NULL, " +
+          "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+      );
+      const res = await pool.query("SELECT code, data FROM houses");
+      for (const row of res.rows) houses[row.code] = row.data;
+      storageInfo = "база данных подключена, домов загружено: " + res.rows.length;
+      console.log("Хранилище:", storageInfo);
       return;
+    } catch (e) {
+      console.log("Не удалось подключиться к базе:", e.message);
+      storageInfo = "ОШИБКА базы: " + String(e.message).slice(0, 200) + " (работаем без неё)";
+      pool = null;
     }
-    const p = pointerPos(e);
-    g.down = true;
-    g.lx = g.px = p[0];
-    g.ly = g.py = p[1];
-    try { mc.setPointerCapture(e.pointerId); } catch (err) {}
-  });
-  mc.addEventListener("pointermove", (e) => {
-    const g = game;
-    if (!g || g.kind !== "scrub" || !g.down || g.done) return;
-    e.preventDefault();
-    const p = pointerPos(e);
-    const d = Math.hypot(p[0] - g.lx, p[1] - g.ly);
-    g.lx = g.px = p[0];
-    g.ly = g.py = p[1];
-    for (const s of g.spots) {
-      if (s.hp > 0 && Math.hypot(s.x - p[0], s.y - p[1]) < s.r + 12) {
-        s.hp -= d / (s.r * 7);
-      }
-    }
-    if (cleanedCount(g) === g.spots.length) finishScrub();
-  });
-  const up = () => { if (game) game.down = false; };
-  mc.addEventListener("pointerup", up);
-  mc.addEventListener("pointercancel", up);
-
-  function drawScrub(g) {
-    m.clearRect(0, 0, 300, 180);
-    for (let ty = 0; ty < 6; ty++) {
-      for (let tx = 0; tx < 10; tx++) {
-        m.fillStyle = (tx + ty) % 2 ? "#d6e8f0" : "#cbe0ea";
-        m.fillRect(tx * 30, ty * 30, 30, 30);
-      }
-    }
-    for (const s of g.spots) {
-      if (s.hp > 0) {
-        m.globalAlpha = 0.35 + 0.65 * Math.max(0, s.hp);
-        m.fillStyle = "#6b4a2b";
-        m.beginPath();
-        m.ellipse(s.x, s.y, s.r, s.r * 0.8, 0, 0, Math.PI * 2);
-        m.fill();
-        m.fillStyle = "#8a6a45";
-        m.beginPath();
-        m.ellipse(s.x - 5, s.y - 4, s.r * 0.4, s.r * 0.3, 0, 0, Math.PI * 2);
-        m.fill();
-        m.globalAlpha = 1;
-      } else {
-        m.font = "16px sans-serif";
-        m.textAlign = "center";
-        m.fillText("✨", s.x, s.y + 6);
-      }
-    }
-    if (g.down) {
-      m.font = "30px sans-serif";
-      m.textAlign = "center";
-      m.fillText("🧽", g.px, g.py + 10);
-    }
-    m.fillStyle = "#6b2d45";
-    m.font = "bold 14px sans-serif";
-    m.textAlign = "left";
-    m.fillText("⏱ " + Math.ceil(Math.max(0, g.left)) + " с", 8, 18);
-    m.textAlign = "right";
-    m.fillText("Пятна: " + cleanedCount(g) + "/" + g.spots.length, 292, 18);
   }
-
-  // ---------- Общий цикл ----------
-  let lastT = 0;
-  function loop(now) {
-    cancelAnimationFrame(raf);
-    lastT = now;
-    const tick = (t) => {
-      const g = game;
-      if (!g) return;
-      const dt = Math.min(0.05, (t - lastT) / 1000);
-      lastT = t;
-      if (g.kind === "cook") {
-        if (g.wait > 0) {
-          g.wait -= dt;
-          if (g.wait <= 0 && !g.done) {
-            g.round++;
-            newRound(g);
-            hintEl.textContent = "Следующий раунд!";
-          }
-        } else if (!g.done) {
-          g.pos += g.dir * SPEED[g.round] * dt;
-          if (g.pos > BAR_X + BAR_W) { g.pos = BAR_X + BAR_W; g.dir = -1; }
-          if (g.pos < BAR_X) { g.pos = BAR_X; g.dir = 1; }
-        }
-        drawCook(g);
-      } else {
-        if (!g.done) {
-          g.left -= dt;
-          if (g.left <= 0) finishScrub();
-        }
-        drawScrub(g);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
+  try {
+    houses = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  } catch (e) {
+    houses = {};
   }
+}
 
-  // ---------- Подключение к кнопке «Действие» ----------
-  function wantStove() {
-    return !!(session && myRole === "caregiver" && near(player, "stove") && !player.carrying);
-  }
-  function wantClean() {
-    return !!(session && myRole && near(player, "clean"));
-  }
-  function tryStart() {
-    if (game) return true;
-    if (window.TLVisit) { showToast("В гостях можно только гулять 🚶"); return true; }
-    if (wantStove()) { startCook(); return true; }
-    if (wantClean()) { startScrub(); return true; }
-    if (typeof wantSit === "function" && wantSit()) { sendMsg({ type: "ask_sit" }); return true; }
-    return false;
-  }
-
-  actBtn.addEventListener(
-    "pointerdown",
-    (e) => {
-      if (tryStart()) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
-      }
-    },
-    true
-  );
-  window.addEventListener(
-    "keydown",
-    (e) => {
-      if (e.target && e.target.tagName === "INPUT") return;
-      if (e.key === "e" || e.key === "E" || e.key === " ") {
-        if (game || wantStove() || wantClean()) {
-          if (!e.repeat) tryStart();
-          e.stopImmediatePropagation();
-          e.preventDefault();
-        }
-      }
-    },
-    true
-  );
-
-  // ---------- Просьба сесть за стол ----------
-  const ask = document.createElement("div");
-  ask.id = "sitAsk";
-  ask.style.cssText =
-    "position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:25;display:none;background:#fff8f0;border:3px solid #6b2d45;border-radius:16px;padding:14px;width:min(88vw,320px);text-align:center;color:#6b2d45;font-family:sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.3)";
-  ask.innerHTML =
-    '<div id="sitAskText" style="font-weight:bold;font-size:16px;margin-bottom:10px"></div>' +
-    '<div style="display:flex;gap:8px">' +
-    '<button class="miniBtn" id="sitYes" style="margin:0;font-size:16px;padding:12px">Разрешить</button>' +
-    '<button class="miniBtn" id="sitNo" style="margin:0;font-size:16px;padding:12px;background:#c9a0b0">Не сейчас</button></div>';
-  document.body.appendChild(ask);
-  let askTimer = null;
-  function hideAsk() { ask.style.display = "none"; clearTimeout(askTimer); }
-  function answerAsk(ok) { hideAsk(); sendMsg({ type: "sit_answer", ok: ok }); }
-  document.getElementById("sitYes").addEventListener("click", () => answerAsk(true));
-  document.getElementById("sitNo").addEventListener("click", () => answerAsk(false));
-
-  const wrapped = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "sit_request") {
-      document.getElementById("sitAskText").textContent =
-        (msg.name || "Партнёр") + " просит сесть рядом и поесть вместе. Разрешить? 🪑";
-      ask.style.display = "block";
-      clearTimeout(askTimer);
-      askTimer = setTimeout(hideAsk, 28000);
-      return;
-    }
-    wrapped(msg);
-  };
-
-  function wantSit() {
-    return !!(
-      session && myRole === "receiver" && partner.present && partner.carrying &&
-      near(player, "table") && near(partner, "table") && !near(player, "bowl")
+async function saveHouse(code) {
+  const house = houses[code];
+  if (!house) return;
+  if (pool) {
+    await pool.query(
+      "INSERT INTO houses (code, data, updated_at) VALUES ($1, $2::jsonb, now()) " +
+        "ON CONFLICT (code) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+      [code, JSON.stringify(house)]
     );
+  } else {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(houses));
   }
+}
 
-  // Ведущий ест своё блюдо за столом (слева от стола, подальше от миски)
-  ZONES.table = [{ x: 3, y: 4, w: 4, h: 2 }];
-  const oldActionInfo = actionInfo;
-  actionInfo = function () {
-    if (wantSit()) return ["🪑", "Сесть рядом"];
-    if (session && myRole === "caregiver" && player.carrying && near(player, "table") && !near(player, "bowl")) {
-      return ["🍽️", "Поесть"];
-    }
-    return oldActionInfo();
-  };
+// Сохраняем не каждую секунду, а пачками (так база успевает отдыхать)
+const dirty = new Set();
+let flushTimer = null;
+let flushAt = 0;
 
+function markDirty(code, urgent) {
+  dirty.add(code);
+  const delay = urgent ? 1500 : 20000;
+  const at = Date.now() + delay;
+  if (flushTimer && flushAt <= at) return;
+  clearTimeout(flushTimer);
+  flushAt = at;
+  flushTimer = setTimeout(flush, delay);
+}
 
-  // ---------- Магазин мебели ----------
-  const CATALOG = [
-    { id: "plant1", n: "Цветок у кухни", e: "🪴", c: 3, it: { t: "plant", x: 9, y: 1 }, it2: { x: 6, y: 8 } },
-    { id: "plant2", n: "Цветок в гостиной", e: "🪴", c: 3, it: { t: "plant", x: 11, y: 2 }, it2: { x: 13, y: 8 } },
-    { id: "plant3", n: "Цветок в спальне", e: "🌿", c: 3, it: { t: "plant", x: 9, y: 8 }, it2: { x: 6, y: 2 } },
-    { id: "lamp1", n: "Торшер в гостиной", e: "💡", c: 4, it: { t: "lamp", x: 18, y: 2 }, it2: { x: 13, y: 2 } },
-    { id: "lamp2", n: "Лампа в спальне", e: "💡", c: 4, it: { t: "lamp", x: 5, y: 8 }, it2: { x: 6, y: 4 } },
-    { id: "night", n: "Тумбочка у кровати", e: "🗄️", c: 5, it: { t: "nightstand", x: 1, y: 11 }, it2: { x: 1, y: 3 } },
-    { id: "tvs", n: "Тумба под телевизор", e: "📺", c: 6, it: { t: "tvstand", x: 14, y: 1, w: 2 }, it2: { x: 10, y: 1, w: 2 } },
-    { id: "arm", n: "Кресло", e: "🛋️", c: 7, it: { t: "armchair", x: 11, y: 5 }, it2: { x: 13, y: 6 } },
-    { id: "pouf", n: "Пуф на кухне", e: "🟣", c: 4, it: { t: "pouf", x: 9, y: 4 }, it2: { x: 1, y: 9 } },
-    { id: "lamp3", n: "Лампа на кухне", e: "💡", c: 4, it: { t: "lamp", x: 1, y: 6 }, it2: { x: 1, y: 8 } },
-    { id: "shelf", n: "Книжный шкаф в спальне", e: "📚", c: 8, it: { t: "bookshelf", x: 2, y: 8, w: 2 }, it2: { x: 12, y: 1, w: 2 } },
-    { id: "aqua", n: "Аквариум", e: "🐠", c: 12, it: { t: "aquarium", x: 14, y: 8, w: 2 }, it2: { x: 15, y: 5, w: 2 } },
-    { id: "shower", n: "Душевая кабина", e: "🚿", c: 10, it: { t: "shower", x: 16, y: 8 }, it2: { x: 16, y: 4 } },
-    { id: "tv", n: "Телевизор (нужна тумба)", e: "📺", c: 10, need: "tvs", it: { t: "tv", x: 14, y: 1, w: 2, solid: false }, it2: { x: 10, y: 1, w: 2, solid: false } }
-  ];
-  SPR.armchair = (x, y) => {
-    r(x + 1, y + 2, 14, 13, "#8a5a8f");
-    r(x + 1, y + 2, 14, 4, "#a577aa");
-    r(x + 3, y + 7, 10, 6, "#b88fbd");
-    r(x, y + 6, 3, 9, "#76497b");
-    r(x + 13, y + 6, 3, 9, "#76497b");
-  };
-  SPR.pouf = (x, y) => {
-    r(x + 2, y + 5, 12, 10, "#9b6fc0");
-    r(x + 2, y + 5, 12, 3, "#b88ad8");
-    r(x + 3, y + 14, 10, 1, "#6e4a8f");
-  };
-  SPR.aquarium = (x, y, w) => {
-    const W = w * 16;
-    r(x, y + 10, W, 6, "#5a3d25");
-    r(x + 2, y + 11, W - 4, 1, "#7a5535");
-    r(x + 1, y, W - 2, 11, "#2f5f7f");
-    r(x + 2, y + 1, W - 4, 8, "#6fc4e8");
-    r(x + 2, y + 7, W - 4, 2, "#e8d49a");
-    const fx = Math.round(Math.sin(curNow / 600) * 4), fx2 = Math.round(Math.cos(curNow / 800) * 5);
-    r(x + 8 + fx, y + 3, 4, 2, "#ff9f5a");
-    r(x + 12 + fx, y + 4, 1, 1, "#ff9f5a");
-    r(x + W / 2 + 2 + fx2, y + 5, 3, 2, "#ffd24d");
-    r(x + 3, y + 5, 1, 3, "#3f9f5a");
-    r(x + 4 + (Math.floor(curNow / 500) % 2), y + 2 - (Math.floor(curNow / 400) % 3), 1, 1, "#ffffff");
-  };
-  SPR.shower = (x, y) => {
-    r(x + 1, y - 14, 14, 30, "#8fb0c4");
-    r(x + 2, y - 13, 12, 27, "#d8f0fa");
-    r(x + 2, y - 13, 12, 3, "#b9d4e0");
-    r(x + 8, y - 10, 1, 4, "#9aa6ae");
-    r(x + 5, y - 7, 7, 2, "#9aa6ae");
-    const sd = Math.floor(curNow / 120) % 3;
-    r(x + 6, y - 4 + sd * 3, 1, 2, "#7fc4e8");
-    r(x + 9, y - 3 + ((sd + 1) % 3) * 3, 1, 2, "#7fc4e8");
-    r(x + 7, y + 1 + ((sd + 2) % 3) * 2, 1, 2, "#7fc4e8");
-    r(x + 2, y + 12, 12, 3, "#f4f4f8");
-    r(x + 7, y + 13, 2, 1, "#9aa6ae");
-  };
-  SPR.tvstand = (x, y, w) => {
-    const W = w * 16;
-    r(x, y + 4, W, 12, "#6b4a2c");
-    r(x, y + 4, W, 1, "#8f6a40");
-    r(x + 2, y + 7, 12, 6, "#4d3320");
-    r(x + W - 14, y + 7, 12, 6, "#4d3320");
-    r(x + 2, y + 13, 3, 3, "#3a2514");
-    r(x + W - 5, y + 13, 3, 3, "#3a2514");
-  };
-  SPR.tv = (x, y, w) => {
-    const W = w * 16;
-    const tf = Math.floor(curNow / 700) % 4;
-    r(x + 3, y - 10, W - 6, 14, "#22252e");
-    r(x + 5, y - 8, W - 10, 9, ["#6fb6d8", "#e8a0c0", "#8fd88f", "#f0d070"][tf]);
-    r(x + 6 + ((Math.floor(curNow / 300) * 3) % (W - 16)), y - 7, 6, 2, "#ffffff");
-    r(x + W / 2 - 3, y + 3, 6, 2, "#22252e");
-  };
-  // тумбочки вдоль стены, камин правее
-  for (const i of LAYOUT.items) {
-    if (i.t === "nightstand" && i.x === 4 && i.y === 9 && !i.sid) { i.x = 1; i.y = 8; }
-    else if (i.t === "fireplace") i.x = 16;
-  }
-
-  // ---------- Обои и пол ----------
-  const WALLS = [["w_pink", "Розовые обои", "#f6cfdc", "#eab8ca"], ["w_mint", "Мятные обои", "#cfeadd", "#b6dccb"], ["w_lav", "Сиреневые обои", "#ddd0f0", "#cbb9e6"], ["w_sun", "Солнечные обои", "#fbe9a8", "#f2d98a"], ["w_blue", "Голубые обои", "#cfe0f5", "#b9d0ee"]];
-  const FLOORS = [["f_light", "Светлый паркет", "wood", "#e3c299", "#cfa878", "#efd2ac"], ["f_dark", "Тёмный паркет", "wood", "#8a5a3a", "#6e4529", "#9d6b46"], ["f_gray", "Серая плитка", "tile", "#d9d9df", "#cdcdd5", "#b8b8c2"], ["f_pink", "Розовая плитка", "tile", "#f6d4de", "#efc3d0", "#dfa8b8"]];
-  let paint = { wall: null, floor: null };
-  const origWall = wallpaperFor;
-  wallpaperFor = function (tx, ty) {
-    const w = WALLS.find((x) => x[0] === paint.wall);
-    return w ? [w[2], w[3]] : origWall(tx, ty);
-  };
-  const origFloor = drawFloorTile;
-  drawFloorTile = function (tx, ty, c) {
-    const f = FLOORS.find((x) => x[0] === paint.floor);
-    if (!f || c === "d") return origFloor(tx, ty, c);
-    const x = tx * T, y = ty * T;
-    if (f[2] === "tile") {
-      r(x, y, T, T, (tx + ty) % 2 === 0 ? f[3] : f[4]);
-      r(x, y + 7, T, 1, f[5]); r(x, y + 15, T, 1, f[5]); r(x + 7, y, 1, T, f[5]); r(x + 15, y, 1, T, f[5]);
-    } else {
-      r(x, y, T, T, f[3]);
-      r(x, y, T, 1, f[4]); r(x, y + 8, T, 1, f[4]);
-      r(x, y + 1, T, 1, f[5]); r(x, y + 9, T, 1, f[5]);
-      r(x + ((tx * 5 + ty * 3) % 14) + 1, y + 1, 1, 7, f[4]);
-      r(x + ((tx * 3 + ty * 7 + 5) % 14) + 1, y + 9, 1, 7, f[4]);
-    }
-  };
-  const paintKey = () => paint.wall + "|" + paint.floor;
-  let owned = [];
-  let coinsNow = 0;
-  const shop = document.createElement("div");
-  shop.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
-  shop.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;max-height:85%;overflow:auto;text-align:center"><b style="font-size:18px">🛒 Магазин</b><div id="shopCoins" style="margin:6px 0"></div><div id="shopList"></div><button id="shopClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
-  document.body.appendChild(shop);
-  function renderShop() {
-    document.getElementById("shopCoins").textContent = "У вас: 🪙 " + coinsNow;
-    const box = document.getElementById("shopList");
-    box.innerHTML = "";
-    for (const c of CATALOG) {
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;align-items:center;gap:8px;margin:6px 0;text-align:left";
-      const has = owned.includes(c.id);
-      const lock = c.need && !owned.includes(c.need);
-      row.innerHTML = '<span style="font-size:24px">' + c.e + '</span><span style="flex:1;font-size:14px">' + c.n + "</span>";
-      const b = document.createElement("button");
-      b.style.cssText = "border:none;border-radius:10px;color:#fff;font-size:14px;padding:8px 10px;background:" + (has ? "#9bc59b" : coinsNow >= c.c && !lock ? "#ff6f91" : "#c9b0b8");
-      b.textContent = has ? "Куплено ✅" : "🪙 " + c.c;
-      if (!has) b.onclick = () => { if (lock) showToast("Сначала купи тумбу 📺"); else sendMsg({ type: "buy", id: c.id }); };
-      row.appendChild(b);
-      box.appendChild(row);
-    }
-    const hd = document.createElement("div");
-    hd.innerHTML = "<b>🎨 Обои и пол</b>";
-    hd.style.margin = "12px 0 4px";
-    box.appendChild(hd);
-    const addPaint = (list, kind) => {
-      const cur = kind === "wall" ? paint.wall : paint.floor;
-      const reset = document.createElement("button");
-      reset.textContent = (cur ? "" : "✓ ") + (kind === "wall" ? "Обои как были" : "Пол как был");
-      reset.style.cssText = "margin:3px;border:none;border-radius:10px;background:#b79bd1;color:#fff;font-size:13px;padding:7px 9px";
-      reset.onclick = () => sendMsg({ type: "paint", [kind]: null });
-      box.appendChild(reset);
-      for (const p of list) {
-        const has = owned.includes(p[0]);
-        const b = document.createElement("button");
-        const on = cur === p[0];
-        b.textContent = p[1] + (on ? " ✓" : has ? "" : " 🪙 5");
-        b.style.cssText = "margin:3px;border:none;border-radius:10px;color:#fff;font-size:13px;padding:7px 9px;background:" + (on ? "#9bc59b" : has ? "#ff6f91" : coinsNow >= 5 ? "#ff9f5a" : "#c9b0b8");
-        b.onclick = () => { if (has) sendMsg({ type: "paint", [kind]: p[0] }); else sendMsg({ type: "buy", id: p[0] }); };
-        box.appendChild(b);
-      }
-    };
-    addPaint(WALLS, "wall");
-    box.appendChild(document.createElement("br"));
-    addPaint(FLOORS, "floor");
-  }
-  function syncOwned() {
-    LAYOUT.items = LAYOUT.items.filter((i) => !i.sid);
-    for (const c of CATALOG) {
-      if (!owned.includes(c.id)) continue;
-      const it = Object.assign({ w: 1, h: 1, solid: true, sid: c.id, k: c.id }, c.it, curPlan === 2 && c.it2 ? c.it2 : {});
-      pose(it, moved[keyOf(c.id === "tv" ? "tvs" : c.id)]);
-      LAYOUT.items.push(it);
-    }
-    if (typeof NPCS !== "undefined") {
-      LAYOUT.items = LAYOUT.items.filter((i) => i.t !== "npc");
-      for (const id of Object.keys(NPCS)) LAYOUT.items.push(NPCS[id].item);
+async function flush() {
+  flushTimer = null;
+  const codes = Array.from(dirty);
+  dirty.clear();
+  for (const code of codes) {
+    try {
+      await saveHouse(code);
+    } catch (e) {
+      console.log("Не удалось сохранить дом " + code + ":", e.message);
+      markDirty(code, false);
     }
   }
-  const shopBtn = document.createElement("button");
-  shopBtn.textContent = "🛒 Магазин";
-  shopBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#ffb347;color:#fff;font-size:13px;padding:4px 10px";
-  shopBtn.onclick = () => { renderShop(); shop.style.display = "flex"; };
-  if (top) top.appendChild(shopBtn);
-  document.getElementById("shopClose").onclick = () => { shop.style.display = "none"; };
-  const prevHandle = handleMessage;
-  handleMessage = function (msg) {
-    prevHandle(msg);
-    if (msg && msg.type === "state" && msg.house) {
-      if (Array.isArray(msg.house.owned)) { owned = msg.house.owned; syncOwned(); }
-      if (typeof msg.house.coins === "number") coinsNow = msg.house.coins;
-      if (msg.house.paint) {
-        const before = paintKey();
-        paint = { wall: msg.house.paint.wall || null, floor: msg.house.paint.floor || null };
-        if (paintKey() !== before) buildBackground();
-      }
-      if (shop.style.display === "flex") renderShop();
-    }
-  };
+}
 
+process.on("SIGTERM", async () => {
+  for (const code of Object.keys(live)) {
+    if (anyLive(code)) dirty.add(code);
+  }
+  try {
+    await flush();
+  } catch (e) {}
+  process.exit(0);
+});
 
-  // ---------- Внешность ----------
-  const PAL = {
-    skin: { human: ["#f5c9a0", "#ffe0cc", "#e8b48a", "#c68a5e", "#8d5a3b"], animal: ["#e8a050", "#b0b0b8", "#fafafa", "#a8744c", "#3a3a44", "#ffb6c8"], ghost: ["#ffffff", "#d8f0ff", "#ffd8f0", "#e8ffd8", "#e8d8ff"] },
-    hair: ["#2f2a3a", "#5a3825", "#a0522d", "#e8c36a", "#ff8fb1", "#6fa8ff", "#ffffff", "#d04040"],
-    shirt: ["#ff6f91", "#6fa8ff", "#7ed08a", "#ffd24d", "#b79bd1", "#ff9f5a", "#ffffff", "#3a3a44"],
-    pants: ["#4a5a8a", "#5a4a7a", "#3a3a44", "#8a5a2c", "#2f6f6f", "#c0c0d0"]
-  };
-  const TYPES = [["human", "👤 Человек"], ["animal", "🐱 Зверёк"], ["ghost", "👻 Призрак"]];
-  const STYLES = [["short", "Короткие"], ["long", "Длинные"], ["bun", "Пучок"]];
-  const cur = () => looks[myRole];
-  // --- уход спать: идём к кровати по проходимым клеткам и ложимся ---
-  function bedSpot(role) {
-    const bed = LAYOUT.items.find((i) => i.t === "bed");
-    if (!bed) return null;
-    const fr = role === "caregiver" ? 0.3 : 0.7;
-    const wide = bed.w >= bed.h;
-    return { bed, x: bed.x + (wide ? bed.w * fr : bed.w / 2), y: bed.y + (wide ? bed.h / 2 : bed.h * fr) };
-  }
-  function findPath(sx, sy, bed) {
-    const blocked = (tx, ty) => {
-      if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS || tileAt(tx, ty) === "#") return true;
-      return LAYOUT.items.some((i) => i.solid && tx >= i.x && tx < i.x + i.w && ty >= i.y && ty < i.y + i.h);
-    };
-    const near = (tx, ty) => tx >= bed.x - 1 && tx <= bed.x + bed.w && ty >= bed.y - 1 && ty <= bed.y + bed.h && !(tx >= bed.x && tx < bed.x + bed.w && ty >= bed.y && ty < bed.y + bed.h);
-    const st = [Math.floor(sx), Math.floor(sy)];
-    const key = (a) => a[0] + "," + a[1];
-    const prev = { [key(st)]: null };
-    const q = [st];
-    while (q.length) {
-      const cur = q.shift();
-      if (near(cur[0], cur[1]) && !blocked(cur[0], cur[1])) {
-        const pts = [];
-        for (let n = cur; n; n = prev[key(n)]) pts.unshift([n[0] + 0.5, n[1] + 0.5]);
-        return pts;
-      }
-      for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const nx = [cur[0] + d[0], cur[1] + d[1]];
-        if (prev[key(nx)] !== undefined || blocked(nx[0], nx[1])) continue;
-        prev[key(nx)] = cur;
-        q.push(nx);
-      }
-    }
-    return null;
-  }
-  function sleepPrep(c, sleeping) {
-    const nowt = performance.now();
-    c._lyX = undefined;
-    if (!sleeping || c !== partner) {
-      c._vx = c.x; c._vy = c.y; c._pth = null;
-      return null;
-    }
-    const sp = bedSpot(partnerRole);
-    if (!sp) return null;
-    if (!c._pth) {
-      c._srv = { x: c.tx !== undefined ? c.tx : c.x, y: c.ty !== undefined ? c.ty : c.y };
-      c._pi = 0; c._seg = 0; c._wt = nowt;
-      if (c._vx !== undefined && Math.hypot(c._vx - sp.x, c._vy - sp.y) > 1.5) {
-        c.x = c._vx; c.y = c._vy;
-        c._pth = findPath(c._vx, c._vy, sp.bed) || [];
-        c._pth.push([sp.x, sp.y]);
-      } else c._pth = [];
-      c._vx = undefined;
-    }
-    const dt = Math.min(0.1, (nowt - c._wt) / 1000);
-    c._wt = nowt;
-    let left = 3.2 * dt;
-    while (left > 0 && c._pi < c._pth.length) {
-      const tgt = c._pth[c._pi];
-      const dx = tgt[0] - c.x, dy = tgt[1] - c.y;
-      const dd = Math.hypot(dx, dy);
-      if (dd <= left) { c.x = tgt[0]; c.y = tgt[1]; left -= dd; c._pi++; }
-      else { c.x += (dx / dd) * left; c.y += (dy / dd) * left; left = 0; }
-      if (Math.abs(dx) > Math.abs(dy)) c.facing = dx > 0 ? "right" : "left"; else c.facing = dy > 0 ? "down" : "up";
-    }
-    if (c._pi < c._pth.length) { c.tx = c.x; c.ty = c.y; return { lying: false }; }
-    // пришёл: ложимся (для сортировки стоим у нижнего края кровати)
-    c.x = c._srv.x; c.y = c._srv.y; c.tx = c.x; c.ty = c.y;
-    c._lyX = sp.x; c._lyY = sp.y - 0.3;
-    return { lying: true, x: sp.x, y: sp.y };
-  }
-  function drawLying(look, sp) {
-    const type = look.type || "human";
-    const lx = Math.round(sp.x * T), ly = Math.round(sp.y * T);
-    const bob = Math.round(Math.sin(performance.now() / 700));
-    ctx.globalAlpha = type === "ghost" ? 0.85 : 1;
-    r(lx - 7, ly - 5, 7, 7, look.skin);
-    r(lx - 7, ly - 5, 7, 3, look.hair);
-    if (type === "animal") { r(lx - 7, ly - 8, 2, 3, look.skin); r(lx - 3, ly - 8, 2, 3, look.skin); }
-    r(lx - 5, ly - 1, 2, 1, "#222");
-    r(lx - 1, ly - 4, 10, 8, look.shirt);
-    r(lx - 1, ly - 4, 10, 1, "rgba(255,255,255,0.35)");
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 8px sans-serif";
-    ctx.fillText("z", lx + 7, ly - 8 + bob);
-    ctx.font = "bold 6px sans-serif";
-    ctx.fillText("z", lx + 12, ly - 13 + bob);
-  }
-  const origName = drawName;
-  drawName = function (c, name, sleeping) {
-    if (c._lyX !== undefined) {
-      const sx = c.x, sy = c.y;
-      c.x = c._lyX; c.y = c._lyY;
-      origName(c, name, sleeping);
-      c.x = sx; c.y = sy;
-    } else origName(c, name, sleeping);
-  };
-  drawCharacter = function (c, look, sleeping) {
-    const sl = sleepPrep(c, sleeping);
-    if (sl && sl.lying) { drawLying(look, sl); return; }
-    const type = look.type || "human";
-    const style = look.style || "short";
-    const nowt = performance.now();
-    if (c._lx !== undefined && (Math.abs(c.x - c._lx) > 0.001 || Math.abs(c.y - c._ly) > 0.001)) c._mv = nowt;
-    c._lx = c.x; c._ly = c.y;
-    const moving = c._mv && nowt - c._mv < 180;
-    const step = Math.floor(nowt / 110) % 2;
-    const px = Math.round(c.x * T - 5);
-    const py0 = Math.round(c.y * T - 10);
-    const py = py0 + (type === "ghost" ? Math.round(Math.sin(nowt / 400) * 1.5) : moving && step ? -1 : 0);
-    ctx.globalAlpha = sleeping ? 0.55 : type === "ghost" ? 0.85 : 1;
-    r(px, py0 + 15, 10, 3, "rgba(0,0,0,0.18)");
-    const up = c.facing === "up";
-    if (type === "ghost") {
-      r(px + 1, py + 1, 8, 13, look.skin);
-      r(px, py + 4, 10, 10, look.skin);
-      r(px, py + 14, 2, 2, look.skin);
-      r(px + 4, py + 14, 2, 2, look.skin);
-      r(px + 8, py + 14, 2, 2, look.skin);
-      r(px + 1, py + 9, 8, 2, look.shirt);
-    } else {
-      if (type === "animal") r(px - 2, py + 9, 3, 2, look.skin);
-      r(px + 2, py + 12, 2, moving && step ? 3 : 4, look.pants);
-      r(px + 6, py + 12, 2, moving && !step ? 3 : 4, look.pants);
-      r(px + 1, py + 7, 8, 6, look.shirt);
-      r(px + 1, py + 1, 8, 7, look.skin);
-      if (type === "animal") {
-        r(px + 1, py - 2, 3, 3, look.skin);
-        r(px + 6, py - 2, 3, 3, look.skin);
-        r(px + 2, py - 1, 1, 1, "#ffb6c8");
-        r(px + 7, py - 1, 1, 1, "#ffb6c8");
-      }
-    }
-    // волосы
-    r(px, py, 10, 3, look.hair);
-    if (style === "bun") r(px + 3, py - 3, 4, 3, look.hair);
-    if (up) {
-      r(px, py, 10, 7, look.hair);
-      if (style === "long") r(px, py + 7, 10, 4, look.hair);
-    } else {
-      const len = style === "long" ? 7 : 3;
-      r(px, py + 3, 2, len, look.hair);
-      r(px + 8, py + 3, 2, len, look.hair);
-      r(px + 2, py + 3, 3, 1, look.hair); // чёлка
-    }
-    if (!up) {
-      if (sleeping) {
-        r(px + 2, py + 6, 2, 1, "#222");
-        r(px + 6, py + 6, 2, 1, "#222");
-      } else if (c.facing === "left") r(px + 2, py + 5, 2, 2, "#222");
-      else if (c.facing === "right") r(px + 6, py + 5, 2, 2, "#222");
-      else { r(px + 2, py + 5, 2, 2, "#222"); r(px + 6, py + 5, 2, 2, "#222"); }
-      if (type === "animal") r(px + 4, py + 6, 2, 1, "#e0507a");
-    }
-    if (c.carrying) {
-      r(px + 7, py + 8, 6, 5, "#8b5e34");
-      r(px + 8, py + 8, 4, 2, "#e8803a");
-    }
-    ctx.globalAlpha = 1;
-  };
-  const look = document.createElement("div");
-  look.style.cssText = "position:fixed;left:0;right:0;bottom:0;max-height:44%;overflow:auto;background:#fff8f0;border-top:3px solid #6b2d45;border-radius:16px 16px 0 0;padding:10px 12px 16px;display:none;z-index:30;text-align:center;font-size:13px";
-  document.body.appendChild(look);
-  let backup = null;
-  function chips(label, items, getter, setter) {
-    const d = document.createElement("div");
-    d.style.margin = "3px 0";
-    d.innerHTML = "<b>" + label + "</b><br>";
-    for (const it of items) {
-      const val = Array.isArray(it) ? it[0] : it;
-      const b = document.createElement("button");
-      const isColor = typeof val === "string" && val[0] === "#";
-      b.style.cssText = "margin:2px;border-radius:9px;border:3px solid " + (getter() === val ? "#6b2d45" : "#e0a0b8") + ";font-size:13px;padding:4px 6px;" + (isColor ? "width:28px;height:28px;background:" + val : "background:#fff;color:#6b2d45");
-      if (!isColor) b.textContent = it[1];
-      b.onclick = () => { setter(val); renderLook(); };
-      d.appendChild(b);
-    }
-    look.appendChild(d);
-  }
-  function renderLook() {
-    const L = cur();
-    look.innerHTML = '<b style="font-size:16px">🎨 Смена внешки</b>';
-    chips("Кто ты", TYPES, () => L.type || "human", (v) => { L.type = v; L.skin = PAL.skin[v][0]; });
-    chips(L.type === "animal" ? "Шёрстка" : L.type === "ghost" ? "Цвет призрака" : "Кожа", PAL.skin[L.type || "human"], () => L.skin, (v) => { L.skin = v; });
-    chips("Причёска", STYLES, () => L.style || "short", (v) => { L.style = v; });
-    chips("Цвет волос", PAL.hair, () => L.hair, (v) => { L.hair = v; });
-    chips(L.type === "ghost" ? "Шарфик" : "Одежда", PAL.shirt, () => L.shirt, (v) => { L.shirt = v; });
-    if (L.type !== "ghost") chips("Штаны", PAL.pants, () => L.pants, (v) => { L.pants = v; });
-    const ok = document.createElement("button");
-    ok.textContent = "Готово ✅";
-    ok.style.cssText = "margin:8px 6px 0;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:16px;padding:10px 22px";
-    ok.onclick = () => { look.style.display = "none"; sendMsg({ type: "look", look: Object.assign({ type: "human", style: "short" }, cur()) }); };
-    const no = document.createElement("button");
-    no.textContent = "Отмена";
-    no.style.cssText = "margin:8px 6px 0;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 22px";
-    no.onclick = () => { look.style.display = "none"; Object.assign(cur(), backup); };
-    look.appendChild(ok);
-    look.appendChild(no);
-  }
-  document.getElementById("lookBtn").addEventListener("click", (e) => {
-    e.stopImmediatePropagation();
-    if (!myRole) return;
-    backup = Object.assign({}, cur());
-    renderLook();
-    look.style.display = "block";
-  }, true);
-  const prevH2 = handleMessage;
-  handleMessage = function (msg) {
-    prevH2(msg);
-    if (msg && msg.type === "state" && msg.players && look.style.display === "none") {
-      for (const rl of ["caregiver", "receiver"]) {
-        const pl = msg.players[rl];
-        if (pl && pl.look && !(rl === myRole && look.style.display !== "none")) Object.assign(looks[rl], pl.look);
-      }
-    }
-  };
+app.get("/status", (req, res) => {
+  res
+    .type("text/plain; charset=utf-8")
+    .send(
+      "TamoLove работает.\nХранилище: " +
+        storageInfo +
+        "\nДомов: " +
+        Object.keys(houses).length
+    );
+});
 
+// Кто сейчас подключён (хранится только в памяти)
+const live = {};
 
-  // ---------- "Был в сети" ----------
-  function ago(ms) {
-    const m = Math.floor(ms / 60000);
-    if (m < 1) return "только что";
-    if (m < 60) return m + " мин назад";
-    const h = Math.floor(m / 60);
-    if (h < 24) return h + " ч назад";
-    return Math.floor(h / 24) + " дн назад";
+function anyLive(code) {
+  return !!(live[code] && (live[code].caregiver || live[code].receiver));
+}
+
+const ROLES = ["caregiver", "receiver"];
+const SPAWN = {
+  caregiver: { x: 12.5, y: 2.5 },
+  receiver: { x: 16.5, y: 2.5 }
+};
+const DEFAULT_NAMES = { caregiver: "Ведущий", receiver: "Ведомый" };
+
+// ---------- Правила игры (можно менять числа) ----------
+const TICK_SECONDS = 5;       // как часто сервер пересчитывает показатели
+const OFFLINE_FACTOR = 0.2;   // во сне (не в сети) всё падает в 5 раз медленнее
+const FLOOR = 25;             // за долгое отсутствие показатели не упадут ниже
+const RATE = {                // падение в секунду, когда игрок в сети
+  satiety: 100 / (12 * 3600), // с полного до нуля примерно за 12 часов в сети
+  energy: 100 / (18 * 3600),  // примерно за 18 часов
+  clean: 100 / (24 * 3600)    // дом пачкается примерно за сутки
+};
+const MOOD_SCALE = 0.02;        // настроение меняется медленнее в том же духе
+const REACH = 1.3;            // как близко надо подойти к предмету
+
+// Еда по качеству блюда (1 подгорело, 2 вкусно, 3 шедевр)
+const FOOD_BOWL = [0, 35, 50, 65];    // сколько еды попадёт в миску
+const FOOD_FEED = [0, 20, 30, 40];    // сколько сытости при кормлении с рук
+const FOOD_MOOD = [0, 1, 4, 8];       // бонус к настроению при кормлении
+const COOK_COINS = [0, 1, 2, 3];      // монеты за готовку
+const COOK_TEXT = [
+  "",
+  "Немного подгорело 😅 Но есть можно!",
+  "Вкусно получилось! 😋",
+  "Шедевр! Просто пальчики оближешь 🌟"
+];
+
+// Места, где можно что-то делать (в клетках)
+const ZONES = {
+  stove: [{ x: 5, y: 1, w: 1, h: 1 }],
+  bowl: [{ x: 7, y: 5, w: 1, h: 1 }],
+  table: [{ x: 3, y: 4, w: 4, h: 2 }],
+  bed: [{ x: 1, y: 9, w: 3, h: 2 }],
+  clean: [{ x: 17, y: 10, w: 1, h: 1 }, { x: 16, y: 12, w: 2, h: 1 }]
+};
+
+function clamp(v) {
+  return Math.max(0, Math.min(100, v));
+}
+
+const ZONES2 = {
+  stove: [{ x: 5, y: 7, w: 1, h: 1 }],
+  bowl: [{ x: 6, y: 11, w: 1, h: 1 }],
+  table: [{ x: 2, y: 10, w: 4, h: 2 }],
+  bed: [{ x: 1, y: 1, w: 3, h: 2 }],
+  clean: [{ x: 16, y: 3, w: 3, h: 1 }]
+};
+const SPAWN2 = { caregiver: { x: 10.5, y: 3.5 }, receiver: { x: 12.5, y: 3.5 } };
+const GAMEITEMS = {
+  0: [
+    { zone: "stove", key: "stove_5_1", x: 5, y: 1, w: 1, h: 1 },
+    { zone: "bowl", key: "bowl_7_5", x: 7, y: 5, w: 1, h: 1 },
+    { zone: "table", key: "table_4_4", x: 4, y: 4, w: 2, h: 2 },
+    { zone: "bed", key: "bed_1_9", x: 1, y: 9, w: 3, h: 2 },
+    { zone: "clean", key: "bucket_17_10", x: 17, y: 10, w: 1, h: 1 },
+    { zone: "clean", key: "washer_16_12", x: 16, y: 12, w: 1, h: 1 },
+    { zone: "clean", key: "basket_17_12", x: 17, y: 12, w: 1, h: 1 }
+  ],
+  2: [
+    { zone: "stove", key: "q_stove_5_7", x: 5, y: 7, w: 1, h: 1 },
+    { zone: "bowl", key: "q_bowl_6_11", x: 6, y: 11, w: 1, h: 1 },
+    { zone: "table", key: "q_table_3_10", x: 3, y: 10, w: 2, h: 2 },
+    { zone: "bed", key: "q_bed_1_1", x: 1, y: 1, w: 3, h: 2 },
+    { zone: "clean", key: "q_bucket_16_3", x: 16, y: 3, w: 1, h: 1 },
+    { zone: "clean", key: "q_washer_17_3", x: 17, y: 3, w: 1, h: 1 },
+    { zone: "clean", key: "q_basket_18_3", x: 18, y: 3, w: 1, h: 1 }
+  ]
+};
+function zonesFor(h) {
+  const list = GAMEITEMS[h.plan === 2 ? 2 : 0];
+  const mv = h.moved || {};
+  const out = { stove: [], bowl: [], table: [], bed: [], clean: [] };
+  for (const g of list) {
+    const m = mv[g.key];
+    const x = m ? m.x : g.x, y = m ? m.y : g.y, rot = m ? m.r || 0 : 0;
+    const w = rot % 2 ? g.h : g.w, hh = rot % 2 ? g.w : g.h;
+    out[g.zone].push(g.zone === "table" ? { x: x - 1, y, w: w + 2, h: hh } : { x, y, w, h: hh });
   }
-  const prevH3 = handleMessage;
-  handleMessage = function (msg) {
-    prevH3(msg);
-    if (msg && msg.type === "state" && msg.players && partnerRole) {
-      const o = msg.players[partnerRole];
-      if (o && !o.online && o.seen) {
-        partnerInfo.textContent = o.name + " спит 💤 · был(а) в сети " + ago(Date.now() - o.seen);
-      }
-    }
-  };
-
-
-  // ---------- Задания ----------
-  let quests = [];
-  const qBox = document.createElement("div");
-  qBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
-  qBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;text-align:center"><b style="font-size:18px">📋 Задания дня</b><div style="font-size:12px;margin:4px 0">Награда сама падает в общий счёт 🪙. Новые задания каждый день.</div><div id="qList"></div><button id="qClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
-  document.body.appendChild(qBox);
-  function renderQ() {
-    const box = document.getElementById("qList");
-    box.innerHTML = "";
-    for (const q of quests) {
-      const d = document.createElement("div");
-      d.style.cssText = "text-align:left;margin:8px 0;font-size:14px";
-      d.innerHTML = (q.d ? "✅ " : "") + q.n + " <b>+" + q.r + " 🪙</b>" + '<div style="height:9px;background:#f3d3de;border-radius:6px;overflow:hidden;margin-top:3px"><div style="height:100%;width:' + Math.round((q.p / q.t) * 100) + '%;background:' + (q.d ? "#7ed08a" : "#ff8fb1") + '"></div></div><small>' + q.p + " / " + q.t + "</small>";
-      box.appendChild(d);
-    }
-  }
-  const qBtn = document.createElement("button");
-  qBtn.textContent = "📋 Задания";
-  qBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#7ed08a;color:#fff;font-size:13px;padding:4px 10px";
-  qBtn.onclick = () => { renderQ(); qBox.style.display = "flex"; };
-  if (top) top.appendChild(qBtn);
-  document.getElementById("qClose").onclick = () => { qBox.style.display = "none"; };
-  const prevH4 = handleMessage;
-  handleMessage = function (msg) {
-    prevH4(msg);
-    if (msg && msg.type === "state" && msg.house && Array.isArray(msg.house.quests)) {
-      quests = msg.house.quests;
-      if (qBox.style.display === "flex") renderQ();
-    }
-  };
-
-
-  // ---------- Огонёк (серия дней) ----------
-  const fire = document.createElement("button");
-  fire.textContent = "🔥 0";
-  fire.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#ff8a4c;color:#fff;font-size:13px;padding:4px 10px";
-  if (top) top.appendChild(fire);
-  const fBox = document.createElement("div");
-  fBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:40;align-items:center;justify-content:center";
-  document.body.appendChild(fBox);
-  let streak = { count: 0, broken: 0, left: 4 };
-  let fShown = false;
-  function renderFire() {
-    const s = streak;
-    if (s.broken) {
-      fBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:16px;width:90%;max-width:340px;text-align:center"><div style="font-size:40px">🕯️</div><b style="font-size:17px">Огонёк погас!</b><p style="font-size:14px">Вы жили вместе ' + s.broken + " дн. и не заходили больше суток. Восстановить бесплатно можно ещё <b>" + s.left + ' из 4</b> раз за эту неделю.</p><button id="fRes" style="width:100%;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:16px;padding:12px;margin-top:6px">🔥 Восстановить</button><button id="fNew" style="width:100%;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:14px;padding:10px;margin-top:8px">Начать заново</button></div>';
-      document.getElementById("fRes").onclick = () => { sendMsg({ type: "streak_restore" }); fBox.style.display = "none"; };
-      document.getElementById("fNew").onclick = () => { sendMsg({ type: "streak_reset" }); fBox.style.display = "none"; };
-    } else {
-      fBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:16px;width:90%;max-width:340px;text-align:center"><div style="font-size:40px">🔥</div><b style="font-size:17px">Вместе уже ' + s.count + ' дн.</b><p style="font-size:14px">Заходите хотя бы раз в сутки, чтобы огонёк не погас. Если погаснет, его можно бесплатно восстановить 4 раза в неделю.</p><button id="fClose" style="width:100%;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px">Закрыть</button></div>';
-      document.getElementById("fClose").onclick = () => { fBox.style.display = "none"; };
-    }
-  }
-  fire.onclick = () => { renderFire(); fBox.style.display = "flex"; };
-  const prevH5 = handleMessage;
-  handleMessage = function (msg) {
-    prevH5(msg);
-    if (msg && msg.type === "state" && msg.house && msg.house.streak) {
-      streak = msg.house.streak;
-      fire.textContent = (streak.broken ? "🕯️ " : "🔥 ") + (streak.broken || streak.count);
-      if (streak.broken && !fShown) { fShown = true; renderFire(); fBox.style.display = "flex"; }
-      if (!streak.broken && fBox.style.display === "flex" && !document.getElementById("fClose")) fBox.style.display = "none";
-    }
-  };
-
-
-  // ---------- Парный танец (как DDR) ----------
-  const NOTES_N = 32, GAP = 700, LEAD = 2000, FALL = 1500;
-  const LANES = ["◀", "▼", "▲", "▶"];
-  const LCOL = ["#ff6f91", "#6fa8ff", "#7ed08a", "#ffd24d"];
-  const dBtn = document.createElement("button");
-  dBtn.textContent = "💃 Танцы";
-  dBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#e06fd0;color:#fff;font-size:13px;padding:4px 10px";
-  if (top) top.appendChild(dBtn);
-  const dOv = document.createElement("div");
-  dOv.style.cssText = "position:fixed;inset:0;background:rgba(40,15,50,.92);display:none;z-index:50;flex-direction:column;align-items:center;justify-content:center;gap:8px;touch-action:none";
-  dOv.innerHTML = '<div id="dTitle" style="color:#fff;font-size:18px;font-weight:bold">💃 Танцуем вместе!</div><canvas id="dCan" width="280" height="300" style="background:#2a1838;border-radius:12px;border:3px solid #e06fd0"></canvas><div id="dRow" style="display:flex;gap:8px"></div><div id="dInfo" style="color:#fff;font-size:14px;min-height:36px;text-align:center;max-width:300px"></div><button id="dClose" style="display:none;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 24px">Закрыть</button>';
-  document.body.appendChild(dOv);
-  const dCan = dOv.querySelector("#dCan"), dc = dCan.getContext("2d");
-  const dInfo = dOv.querySelector("#dInfo"), dClose = dOv.querySelector("#dClose");
-  const dRow = dOv.querySelector("#dRow");
-  let dance = null;
-  function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-  function press(l) {
-    if (!dance || dance.over) return;
-    const now = performance.now() - dance.t0;
-    let best = null;
-    for (const n of dance.notes) {
-      if (n.l !== l || n.done) continue;
-      const d = Math.abs(now - (n.t + FALL));
-      if (d < 260 && (!best || d < best.d)) best = { n, d };
-    }
-    dance.flash[l] = now;
-    if (best) { if (window.TLSfx) TLSfx.hit(); best.n.done = 1; dance.hits++; dance.msg = best.d < 110 ? "Идеально! ✨" : "Хорошо!"; dance.msgAt = now; }
-    else { if (window.TLSfx) TLSfx.miss(); dance.msg = "Мимо"; dance.msgAt = now; }
-  }
-  LANES.forEach((a, i) => {
-    const b = document.createElement("button");
-    b.textContent = a;
-    b.style.cssText = "width:62px;height:62px;border:none;border-radius:14px;font-size:30px;color:#fff;background:" + LCOL[i];
-    b.addEventListener("pointerdown", (e) => { e.preventDefault(); press(i); });
-    dRow.appendChild(b);
+  return out;
+}
+let CUR = null; // дом, с которым сейчас работаем
+function near(p, zoneName) {
+  const flip = CUR && CUR.plan === 1;
+  const base = CUR ? zonesFor(CUR)[zoneName] : ZONES[zoneName];
+  return base.map((z) => (flip ? { x: 20 - z.x - z.w, y: z.y, w: z.w, h: z.h } : z)).some((z) => {
+    const dx = Math.max(z.x - p.x, 0, p.x - (z.x + z.w));
+    const dy = Math.max(z.y - p.y, 0, p.y - (z.y + z.h));
+    return Math.hypot(dx, dy) <= REACH;
   });
-  window.addEventListener("keydown", (e) => {
-    if (dOv.style.display === "none") return;
-    const m = { ArrowLeft: 0, ArrowDown: 1, ArrowUp: 2, ArrowRight: 3 }[e.key];
-    if (m !== undefined) { e.preventDefault(); e.stopPropagation(); press(m); }
-  }, true);
-  function drawDance(now) {
-    if (!dance) return;
-    const t = now - dance.t0;
-    dc.clearRect(0, 0, 280, 300);
-    const lw = 70, hitY = 250;
-    for (let i = 0; i < 4; i++) {
-      dc.fillStyle = i % 2 ? "#331f44" : "#2a1838";
-      dc.fillRect(i * lw, 0, lw, 300);
-      const fl = dance.flash[i] !== undefined && t - dance.flash[i] < 150;
-      dc.fillStyle = fl ? LCOL[i] : "rgba(255,255,255,0.15)";
-      dc.fillRect(i * lw + 6, hitY - 6, lw - 12, 12);
+}
+
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function ensureHouse(house) {
+  if (typeof house.clean !== "number") house.clean = 80;
+  if (typeof house.bowl !== "number") house.bowl = 0;
+  if (typeof house.coins !== "number") house.coins = 0;
+  if (!Array.isArray(house.owned)) house.owned = [];
+  if (typeof house.lastSeen !== "number") house.lastSeen = Date.now();
+  for (const role of ROLES) {
+    const p = house.players[role];
+    if (!p) continue;
+    if (typeof p.satiety !== "number") p.satiety = 80;
+    if (typeof p.energy !== "number") p.energy = 80;
+    if (typeof p.mood !== "number") p.mood = 80;
+    if (![1, 2, 3].includes(p.tier)) p.tier = 2;
+    p.carrying = !!p.carrying;
+  }
+}
+
+// Пока в доме никого не было, все «спали»: считаем медленное падение
+function slowDecay(value, amount) {
+  return Math.max(value - amount, Math.min(value, FLOOR));
+}
+
+function catchUp(house) {
+  const now = Date.now();
+  const seconds = Math.min(2 * 86400, Math.max(0, (now - (house.lastSeen || now)) / 1000));
+  house.lastSeen = now;
+  if (seconds < 30) return;
+  const f = OFFLINE_FACTOR * seconds;
+  for (const role of ROLES) {
+    const p = house.players[role];
+    if (!p) continue;
+    p.satiety = slowDecay(p.satiety, RATE.satiety * f);
+    p.energy = slowDecay(p.energy, RATE.energy * f);
+    p.mood = slowDecay(p.mood, 0.01 * MOOD_SCALE * f);
+  }
+  house.clean = slowDecay(house.clean, RATE.clean * f);
+}
+
+function makeCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code;
+  do {
+    code = "";
+    for (let i = 0; i < 5; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
     }
-    dc.font = "bold 34px sans-serif"; dc.textAlign = "center"; dc.textBaseline = "middle";
-    for (const n of dance.notes) {
-      if (n.done) continue;
-      const y = hitY - (n.t + FALL - t) * (hitY / FALL);
-      if (y < -20 || y > 330) continue;
-      dc.fillStyle = LCOL[n.l];
-      dc.fillText(LANES[n.l], n.l * lw + lw / 2, y);
-    }
-    dc.fillStyle = "#fff"; dc.font = "bold 14px sans-serif";
-    dc.fillText("Очки: " + dance.hits + " / " + NOTES_N, 140, 14);
-    if (dance.msg && t - dance.msgAt < 500) dc.fillText(dance.msg, 140, 40);
-    if (t < 0) { dc.font = "bold 44px sans-serif"; dc.fillText(String(Math.ceil(-t / 1000)), 140, 130); }
-    if (!dance.over && t > dance.end) {
-      dance.over = true;
-      sendMsg({ type: "dance_score", hits: dance.hits });
-      dInfo.textContent = "Ждём партнёра… 💞";
+  } while (houses[code]);
+  return code;
+}
+
+function cleanName(name, role) {
+  const s = String(name || "").trim().slice(0, 12);
+  return s || DEFAULT_NAMES[role];
+}
+
+function makePlayer(id, role, name) {
+  return {
+    id,
+    name: cleanName(name, role),
+    x: SPAWN[role].x,
+    y: SPAWN[role].y,
+    facing: "down",
+    satiety: 80,
+    energy: 80,
+    mood: 80,
+    carrying: false,
+    tier: 2
+  };
+}
+
+const SHOP = { plant1: 3, plant2: 3, plant3: 3, lamp1: 4, lamp2: 4, night: 5, tvs: 6, tv: 10, arm: 7, aqua: 12, shelf: 8, pouf: 4, lamp3: 4, shower: 10, w_pink: 5, w_mint: 5, w_lav: 5, w_sun: 5, w_blue: 5, f_light: 5, f_dark: 5, f_gray: 5, f_pink: 5 };
+
+function publicState(code) {
+  const house = houses[code];
+  const players = {};
+  for (const role of ROLES) {
+    const p = house.players[role];
+    if (p) {
+      players[role] = {
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        facing: p.facing,
+        online: !!(live[code] && live[code][role]),
+        satiety: Math.round(p.satiety),
+        energy: Math.round(p.energy),
+        mood: Math.round(p.mood),
+        carrying: p.carrying,
+        look: p.look || null,
+        notify: p.notify !== false,
+        seen: p.seen || 0
+      };
     }
   }
-  function dLoop(now) {
-    if (dOv.style.display === "none") return;
-    drawDance(now);
-    requestAnimationFrame(dLoop);
-  }
-  function startDance(seed) {
-    const R = rng(seed);
-    const notes = [];
-    for (let i = 0; i < NOTES_N; i++) notes.push({ t: LEAD + i * GAP, l: Math.floor(R() * 4), done: 0 });
-    dance = { notes, hits: 0, flash: {}, over: false, msg: "", msgAt: 0, t0: performance.now() + 3000, end: LEAD + NOTES_N * GAP + FALL + 400 };
-    dInfo.textContent = "Жми стрелки, когда они долетят до полоски!";
-    dClose.style.display = "none";
-    dOv.style.display = "flex";
-    requestAnimationFrame(dLoop);
-  }
-  dClose.onclick = () => { dOv.style.display = "none"; dance = null; };
-  dBtn.onclick = () => sendMsg({ type: "dance_invite" });
-  const dAsk = document.createElement("div");
-  dAsk.style.cssText = "position:fixed;left:10px;right:10px;bottom:90px;background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:12px;display:none;z-index:45;text-align:center";
-  dAsk.innerHTML = '<div id="dAskT" style="font-size:15px;font-weight:bold;margin-bottom:8px"></div><button id="dYes" style="border:none;border-radius:12px;background:#e06fd0;color:#fff;font-size:16px;padding:10px 18px;margin:0 6px">Танцуем!</button><button id="dNo" style="border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 18px;margin:0 6px">Не сейчас</button>';
-  document.body.appendChild(dAsk);
-  dAsk.querySelector("#dYes").onclick = () => { dAsk.style.display = "none"; sendMsg({ type: "dance_answer", ok: true }); };
-  dAsk.querySelector("#dNo").onclick = () => { dAsk.style.display = "none"; sendMsg({ type: "dance_answer", ok: false }); };
-  const prevH6 = handleMessage;
-  handleMessage = function (msg) {
-    prevH6(msg);
-    if (!msg) return;
-    if (msg.type === "dance_invite") {
-      dAsk.querySelector("#dAskT").textContent = msg.name + " зовёт танцевать 💃";
-      dAsk.style.display = "block";
-      setTimeout(() => { dAsk.style.display = "none"; }, 28000);
-    } else if (msg.type === "dance_start") {
-      dAsk.style.display = "none";
-      startDance(msg.seed);
-    } else if (msg.type === "dance_end") {
-      if (dance) dance.over = true;
-      dInfo.textContent = msg.text;
-      dClose.style.display = "inline-block";
+  return {
+    type: "state",
+    code,
+    players,
+    house: {
+      clean: Math.round(house.clean),
+      bowl: Math.round(house.bowl),
+      coins: Math.round(house.coins),
+      owned: house.owned || [],
+      plan: house.plan || 0,
+      moved: house.moved || {},
+      paint: house.paint || { wall: null, floor: null },
+      guests: guestList(code),
+      friends: (house.friends || []).map(friendInfo).filter(Boolean),
+      requests: Object.keys(house.fr_in || {}).map((c) => ({ code: c, label: houses[c] ? houseLabel(houses[c]) : "Дом" })),
+      ach: ACH.map((a) => ({ id: a.id, n: a.n, p: Math.min(a.t, statVal(house, a.s)), t: a.t, r: a.r, d: !!(house.ach && house.ach[a.id]) })),
+      streak: { count: streakOf(house).count, broken: streakOf(house).broken, left: Math.max(0, 4 - streakOf(house).used) },
+      quests: QUESTS.map((d) => {
+        const q = qState(house);
+        return { id: d.id, n: d.n, p: Math.min(d.t, q.p[d.id] || 0), t: d.t, r: d.r, d: !!q.done[d.id] };
+      })
     }
   };
+}
 
-
-  // ---------- Планировка дома (зеркальная) и меню ----------
-  const clone = (o) => JSON.parse(JSON.stringify(o));
-  const SNAP = { map: clone(LAYOUT.map), rugs: clone(LAYOUT.rugs), decor: clone(LAYOUT.decor), zones: clone(ZONES), spawn: clone(LAYOUT.spawn), items: LAYOUT.items.filter((i) => !i.sid).map((i) => { const c = clone(i); c.k = i.t + "_" + i.x + "_" + i.y; return c; }) };
-  let moved = {};
-
-  // ---------- Третья планировка: большая гостиная по центру ----------
-  const PLAN2 = {
-    map: [
-      "####################",
-      "#bbbbbb#llllll#cccc#",
-      "#bbbbbb#llllll#cccc#",
-      "#bbbbbbdllllll#cccc#",
-      "#bbbbbb#lllllldcccc#",
-      "#bbbbbb#llllll#cccc#",
-      "###d####llllll#cccc#",
-      "#kkkkkk#llllll#cccc#",
-      "#kkkkkk#llllll#cccc#",
-      "#kkkkkkdllllll######",
-      "#kkkkkk#llllll######",
-      "#kkkkkk#############",
-      "#kkkkkk#############",
-      "####################"
-    ],
-    rugs: [
-      { x: 2, y: 3, w: 4, h: 2, border: "#cdb0df", body: "#a98ac6", inner: "#b79bd1" },
-      { x: 2, y: 9, w: 4, h: 4, border: "#3f6b3f", body: "#4f8a4f", inner: "#5b9a58" },
-      { x: 8, y: 3, w: 6, h: 5, border: "#e0bf8a", body: "#a23f3f", inner: "#b04a48" },
-      { x: 15, y: 6, w: 4, h: 2, border: "#a3c7da", body: "#7fb0c9", inner: "#8dbcd3" }
-    ],
-    decor: [
-      { t: "window", x: 2, y: 0, w: 2 },
-      { t: "window", x: 10, y: 0, w: 2 },
-      { t: "window", x: 16, y: 0, w: 2 },
-      { t: "picture", x: 1, y: 6, w: 1 },
-      { t: "shelf", x: 4, y: 6, w: 2 }
-    ],
-    zones: {
-      stove: [{ x: 5, y: 7, w: 1, h: 1 }],
-      bowl: [{ x: 6, y: 11, w: 1, h: 1 }],
-      table: [{ x: 2, y: 10, w: 4, h: 2 }],
-      bed: [{ x: 1, y: 1, w: 3, h: 2 }],
-      clean: [{ x: 16, y: 3, w: 3, h: 1 }]
-    },
-    spawn: { caregiver: { x: 10.5, y: 3.5 }, receiver: { x: 12.5, y: 3.5 } },
-    items: [
-      { t: "bed", x: 1, y: 1, w: 3, h: 2 }, { t: "nightstand", x: 4, y: 1 }, { t: "wardrobe", x: 5, y: 1, w: 2 },
-      { t: "dresser", x: 5, y: 5, w: 2 }, { t: "plant", x: 1, y: 5 },
-      { t: "counter", x: 1, y: 7, w: 2 }, { t: "sink", x: 4, y: 7 }, { t: "stove", x: 5, y: 7 }, { t: "fridge", x: 6, y: 7 },
-      { t: "table", x: 3, y: 10, w: 2, h: 2 },
-      { t: "chair", x: 2, y: 10, dir: "right" }, { t: "chair", x: 2, y: 11, dir: "right" },
-      { t: "chair", x: 5, y: 10, dir: "left" }, { t: "chair", x: 5, y: 11, dir: "left" },
-      { t: "bowl", x: 6, y: 11, solid: false }, { t: "plant", x: 6, y: 12 },
-      { t: "bookshelf", x: 8, y: 1, w: 2 }, { t: "lamp", x: 13, y: 5 },
-      { t: "coffeetable", x: 10, y: 5, w: 2 }, { t: "sofa", x: 9, y: 8, w: 4 },
-      { t: "plant", x: 8, y: 10 }, { t: "plant", x: 13, y: 10 },
-      { t: "cabinet", x: 15, y: 1, w: 2 }, { t: "plant", x: 18, y: 1 },
-      { t: "bucket", x: 16, y: 3 }, { t: "washer", x: 17, y: 3 }, { t: "basket", x: 18, y: 3 },
-      { t: "shower", x: 18, y: 5 }, { t: "plant", x: 15, y: 8 }, { t: "plant", x: 18, y: 8 }
-    ].map((i) => { i.w = i.w || 1; i.h = i.h || 1; if (i.solid === undefined) i.solid = true; i.k = i.t + "_" + i.x + "_" + i.y; return i; })
-  };
-  const keyOf = (k) => (curPlan === 2 ? "q_" + k : k);
-  let curPlan = null;
-  // применяем сохранённое положение (x, y, r) к предмету
-  function pose(it, m) {
-    const ow = it.ow || it.w, oh = it.oh || it.h;
-    it.ow = ow; it.oh = oh;
-    const r0 = m && m.r ? m.r : 0;
-    if (m) { it.x = m.x; it.y = m.y; }
-    it.w = r0 % 2 ? oh : ow;
-    it.h = r0 % 2 ? ow : oh;
-    it.rot = r0;
-    if (curPlan === 1) { it.x = 20 - it.x - it.w; it.rot = (4 - r0) % 4; }
-    return it;
+const GUESTS = {}; // гости: код дома -> { id: {ws, name, look, x, y, facing} }
+let gidCounter = 0;
+function guestList(code) {
+  const g = GUESTS[code] || {};
+  return Object.keys(g).map((id) => ({ id, name: g[id].name, look: g[id].look, x: g[id].x, y: g[id].y, facing: g[id].facing }));
+}
+function leaveVisit(ws) {
+  const code = ws.visiting;
+  if (!code) return;
+  ws.visiting = null;
+  const g = GUESTS[code] && GUESTS[code][ws.gid];
+  if (GUESTS[code]) delete GUESTS[code][ws.gid];
+  if (houses[code] && g) {
+    notifyHouse(houses[code], g.name + " ушёл(ла) домой 👋");
+    broadcast(code);
   }
-  const mx = (o) => Object.assign({}, o, { x: 20 - o.x - (o.w || 1) });
-  function applyPlan(n, mirrorMe) {
-    const f = n === 1;
-    const SRC = n === 2 ? PLAN2 : SNAP;
-    curPlan = n;
-    LAYOUT.map = f ? SRC.map.map((row) => row.split("").reverse().join("")) : clone(SRC.map);
-    LAYOUT.rugs = f ? SRC.rugs.map(mx) : clone(SRC.rugs);
-    LAYOUT.decor = f ? SRC.decor.map(mx) : clone(SRC.decor);
-    LAYOUT.items = SRC.items.map((i) => {
-      const c = clone(i);
-      pose(c, moved[keyOf(c.k)]);
-      if (f) { if (c.dir === "left") c.dir = "right"; else if (c.dir === "right") c.dir = "left"; }
-      return c;
+}
+function broadcast(code) {
+  if (!houses[code]) return;
+  const st = publicState(code);
+  const msg = JSON.stringify(st);
+  if (live[code]) {
+    for (const role of ROLES) {
+      const sock = live[code][role];
+      if (sock && sock.readyState === 1) sock.send(msg);
+    }
+  }
+  const gs = GUESTS[code];
+  if (gs) {
+    const m2 = JSON.stringify({ type: "visit_state", state: st });
+    for (const id of Object.keys(gs)) if (gs[id].ws.readyState === 1) gs[id].ws.send(m2);
+  }
+}
+
+function send(ws, obj) {
+  if (ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+
+// ---------- Уведомления в Telegram (нужен BOT_TOKEN в настройках Render) ----------
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
+function tgSend(chatId, text) {
+  if (!BOT_TOKEN) return;
+  const body = JSON.stringify({ chat_id: chatId, text, reply_markup: { inline_keyboard: [[{ text: "Открыть дом 🏠", url: "https://t.me/TamoLoveGameBot" }]] } });
+  try {
+    const req = https.request({ hostname: "api.telegram.org", path: "/bot" + BOT_TOKEN + "/sendMessage", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } }, (res) => res.resume());
+    req.on("error", () => {});
+    req.setTimeout(8000, () => req.destroy());
+    req.write(body);
+    req.end();
+  } catch (e) {}
+}
+function tgApi(method, payload, cb) {
+  if (!BOT_TOKEN) { if (cb) cb(null); return; }
+  const body = JSON.stringify(payload);
+  try {
+    const req = https.request({ hostname: "api.telegram.org", path: "/bot" + BOT_TOKEN + "/" + method, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } }, (res) => {
+      let d = "";
+      res.on("data", (c) => (d += c));
+      res.on("end", () => { if (cb) { try { cb(JSON.parse(d)); } catch (e) { cb(null); } } });
     });
-    LAYOUT.spawn = f ? { caregiver: { x: 20 - SRC.spawn.caregiver.x, y: SRC.spawn.caregiver.y }, receiver: { x: 20 - SRC.spawn.receiver.x, y: SRC.spawn.receiver.y } } : clone(SRC.spawn);
-    for (const k of Object.keys(ZONES)) delete ZONES[k];
-    for (const k of Object.keys(SRC.zones)) ZONES[k] = f ? SRC.zones[k].map(mx) : clone(SRC.zones[k]);
-    if (mirrorMe) player.x = 20 - player.x;
-    syncOwned();
-    rebuildZones();
-    buildBackground();
-  }
-  function rebuildZones() {
-    const z = { stove: [], bowl: [], table: [], bed: [], clean: [] };
-    for (const i of LAYOUT.items) {
-      const rect = { x: i.x, y: i.y, w: i.w, h: i.h };
-      if (i.sid) continue;
-      if (i.t === "stove") z.stove.push(rect);
-      else if (i.t === "bowl") z.bowl.push(rect);
-      else if (i.t === "bed") z.bed.push(rect);
-      else if (i.t === "table") z.table.push({ x: i.x - 1, y: i.y, w: i.w + 2, h: i.h });
-      else if (i.t === "bucket" || i.t === "washer" || i.t === "basket") z.clean.push(rect);
-    }
-    for (const k of Object.keys(z)) ZONES[k] = z[k];
-  }
-  const planBtn = document.createElement("button");
-  planBtn.textContent = "🏠 План дома";
-  const PLANS = [["Уютный домик", "Кухня и спальня слева, гостиная и уборка справа"], ["Зеркальный домик", "То же самое, но наоборот"], ["Большая гостиная", "Гостиная в центре, комнаты по бокам"]];
-  const pBox = document.createElement("div");
-  pBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:40;align-items:center;justify-content:center";
-  document.body.appendChild(pBox);
-  function renderPlans() {
-    pBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;text-align:center"><b style="font-size:18px">🏠 Выбери планировку</b><div id="pList"></div><button id="pClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
-    const list = pBox.querySelector("#pList");
-    PLANS.forEach((p, i) => {
-      const b = document.createElement("button");
-      const on = (curPlan || 0) === i;
-      b.style.cssText = "display:block;width:100%;margin:8px 0;text-align:left;border-radius:12px;padding:10px;font-size:14px;color:#6b2d45;background:" + (on ? "#ffe0ea" : "#fff") + ";border:3px solid " + (on ? "#ff6f91" : "#e0a0b8");
-      b.innerHTML = "<b>" + (i + 1) + ". " + p[0] + (on ? " ✅" : "") + "</b><br><small>" + p[1] + "</small>";
-      b.onclick = () => { pBox.style.display = "none"; if (!on) sendMsg({ type: "set_plan", plan: i }); };
-      list.appendChild(b);
-    });
-    pBox.querySelector("#pClose").onclick = () => { pBox.style.display = "none"; };
-  }
-  planBtn.onclick = () => { renderPlans(); pBox.style.display = "flex"; };
-  const prevH7 = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "state" && msg.house && msg.house.moved) {
-      const str = JSON.stringify(msg.house.moved);
-      if (str !== JSON.stringify(moved)) {
-        moved = msg.house.moved;
-        if (curPlan !== null && msg.house.plan === curPlan) { applyPlan(curPlan, false); posHi(); }
-      }
-    }
-    if (msg && msg.type === "state" && msg.house && typeof msg.house.plan === "number" && msg.house.plan !== curPlan) {
-      const prevP = curPlan;
-      applyPlan(msg.house.plan, prevP !== null && prevP !== 2 && msg.house.plan !== 2);
-      if (prevP !== null && (prevP === 2 || msg.house.plan === 2) && msg.players && msg.players[myRole]) {
-        player.x = msg.players[myRole].x; player.y = msg.players[myRole].y;
-      }
-    }
-    prevH7(msg);
-  };
+    req.on("error", () => { if (cb) cb(null); });
+    req.setTimeout(8000, () => req.destroy());
+    req.write(body);
+    req.end();
+  } catch (e) { if (cb) cb(null); }
+}
 
-
-  // поворот мебели: у каждой вещи рисуем нужную сторону
-  const scratch = document.createElement("canvas");
-  scratch.width = 10 * T; scratch.height = 9 * T;
-  const sctx = scratch.getContext("2d");
-  const SYM = ["plant", "lamp", "pouf", "bucket", "basket", "bowl", "chair"];
-  const FPAL = {
-    sofa: { dark: "#2a4a80", seat: "#3d6bb0", back: "#2f5490", arm: "#34609f" },
-    armchair: { dark: "#76497b", seat: "#b88fbd", back: "#8a5a8f", arm: "#a577aa" }
-  };
-  const BODY = {
-    bookshelf: ["#7a4a2a", 14], wardrobe: ["#8a5a2c", 10], dresser: ["#9a6a3a", 0], nightstand: ["#a4733f", 0],
-    table: ["#a8744c", 0], coffeetable: ["#a8744c", 0], tvstand: ["#6b4a2c", 0], tv: ["#22252e", 10],
-    cabinet: ["#5f8a9a", 0], counter: ["#d9c19a", 0], sink: ["#d9c19a", 0], stove: ["#7d8087", 0], fridge: ["#dfe4ea", 12],
-    washer: ["#f0f0f4", 0], shower: ["#b9d4e0", 14], aquarium: ["#5a8fb0", 0], fireplace: ["#8b8b92", 14]
-  };
-  function shade(hex, k) {
-    const n = parseInt(hex.slice(1), 16);
-    const f = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
-    return "#" + [f((n >> 16) & 255), f((n >> 8) & 255), f(n & 255)].map((v) => v.toString(16).padStart(2, "0")).join("");
-  }
-  function sofaLike(x, y, w, h, rot, p) {
-    const W = w * T, H = h * T, dir = ["down", "left", "up", "right"][rot];
-    r(x, y, W, H, p.dark);
-    let seat, back, arms;
-    if (dir === "up") { seat = [x + 3, y, W - 6, H - 6]; back = [x, y + H - 7, W, 7]; arms = [[x, y, 3, H - 6], [x + W - 3, y, 3, H - 6]]; }
-    else if (dir === "left") { seat = [x, y + 3, W - 5, H - 6]; back = [x + W - 5, y, 5, H]; arms = [[x, y, W - 5, 3], [x, y + H - 3, W - 5, 3]]; }
-    else if (dir === "right") { seat = [x + 5, y + 3, W - 5, H - 6]; back = [x, y, 5, H]; arms = [[x + 5, y, W - 5, 3], [x + 5, y + H - 3, W - 5, 3]]; }
-    else { seat = [x + 3, y + 5, W - 6, H - 5]; back = [x, y, W, 5]; arms = [[x, y + 5, 3, H - 5], [x + W - 3, y + 5, 3, H - 5]]; }
-    r(seat[0], seat[1], seat[2], seat[3], p.seat);
-    const longH = W >= H;
-    for (let i = 1; i < Math.round((longH ? W : H) / T); i++) {
-      if (longH) r(seat[0] + i * T - 1 - (seat[0] - x), seat[1], 1, seat[3], p.dark); else r(seat[0], seat[1] + i * T - 1 - (seat[1] - y), seat[2], 1, p.dark);
-    }
-    for (const a of arms) r(a[0], a[1], a[2], a[3], p.arm);
-    r(back[0], back[1], back[2], back[3], p.back);
-    if (dir === "up") r(back[0], back[1], back[2], 1, shade(p.back, 1.25)); else r(back[0], back[1], back[2], 1, shade(p.back, 1.25));
-  }
-  function bedRot(x, y, w, h, rot) {
-    const W = w * T, H = h * T;
-    r(x, y, W, H, "#7a4a2a");
-    r(x + 1, y + 1, W - 2, H - 2, "#f2ece0");
-    const head = ["W", "N", "E", "S"][rot];
-    const hz = head === "W" || head === "E";
-    const L = hz ? W : H, C = hz ? H : W;
-    // рисуем в локальных координатах (вдоль кровати u, поперёк v), потом переводим
-    const px = (u, v, du, dv, col) => {
-      let ru = head === "W" || head === "N" ? u : L - u - du;
-      let X, Y, WW, HH;
-      if (hz) { X = x + ru; Y = y + v; WW = du; HH = dv; } else { X = x + v; Y = y + ru; WW = dv; HH = du; }
-      r(X, Y, WW, HH, col);
-    };
-    px(1, 1, 4, C - 2, "#8f5b30");
-    px(1, 1, 4, 1, "#b07840");
-    const np = Math.max(1, Math.round(C / 22));
-    for (let i = 0; i < np; i++) { const v = 3 + i * Math.floor((C - 6) / np); px(6, v, 10, Math.floor((C - 6) / np) - 2, "#ffffff"); }
-    px(18, 1, L - 20, C - 2, "#e0839c");
-    px(18, 1, 4, C - 2, "#f0a9bb");
-    for (let u = 30; u < L - 4; u += 8) px(u, 1, 2, C - 2, "#cf7189");
-  }
-  function plainBox(name, x, y, w, h, rot) {
-    const [col, hh] = BODY[name];
-    const W = w * T, H = h * T;
-    if (name === "tv") { r(x + W / 2 - 2, y - 10, 4, 14 + (h - 1) * T, "#22252e"); r(x + W / 2 - 2, y - 10, 4, 1, "#3a3e4a"); return; }
-    r(x + 1, y - hh, W - 2, H + hh, col);
-    r(x + 1, y - hh, W - 2, 3, shade(col, 1.25));
-    r(x + 1, y + H - 3, W - 2, 3, shade(col, 0.78));
-    r(x + 1, y - hh, 1, H + hh, shade(col, 0.9));
-    if (rot === 2) { /* вид сзади: гладкая стенка */ }
-  }
-  const silCache = {};
-  function silhouette(name, orig, ow, oh, it) {
-    const key = name + ow + "x" + oh;
-    if (silCache[key]) return silCache[key];
-    sctx.clearRect(0, 0, scratch.width, scratch.height);
-    const saveG = g; g = sctx; orig(0, T, ow, oh, it); g = saveG;
-    const W = ow * T, H = (oh + 1) * T;
-    const img = sctx.getImageData(0, 0, W, H);
-    const col = BODY[name][0];
-    let minY = H, maxY = 0;
-    for (let i = 0; i < img.data.length; i += 4) if (img.data[i + 3] > 0) { const yy = Math.floor(i / 4 / W); if (yy < minY) minY = yy; if (yy > maxY) maxY = yy; }
-    const n = parseInt(col.slice(1), 16);
-    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
-    const c2 = cv.getContext("2d");
-    const out = c2.createImageData(W, H);
-    for (let i = 0; i < img.data.length; i += 4) {
-      if (img.data[i + 3] === 0) continue;
-      const yy = Math.floor(i / 4 / W), t = (yy - minY) / Math.max(1, maxY - minY);
-      const k = t < 0.12 ? 1.25 : t > 0.85 ? 0.78 : 1;
-      out.data[i] = Math.min(255, ((n >> 16) & 255) * k); out.data[i + 1] = Math.min(255, ((n >> 8) & 255) * k); out.data[i + 2] = Math.min(255, (n & 255) * k); out.data[i + 3] = 255;
-    }
-    c2.putImageData(out, 0, 0);
-    silCache[key] = cv;
-    return cv;
-  }
-  for (const name of Object.keys(SPR)) {
-    const orig = SPR[name];
-    SPR[name] = function (x, y, w, h, it) {
-      if (!it || !it.rot) return orig(x, y, w, h, it);
-      const ow = it.ow || w, oh = it.oh || h, rot = it.rot;
-      if (SYM.includes(name)) return orig(x, y, ow, oh, it);
-      if (name === "sofa" || name === "armchair") return sofaLike(x, y, w, h, rot, FPAL[name]);
-      if (name === "bed") return bedRot(x, y, w, h, rot);
-      if (BODY[name]) {
-        if (rot === 2) { ctx.drawImage(silhouette(name, orig, ow, oh, it), x, y - T); return; }
-        return plainBox(name, x, y, w, h, rot);
-      }
-      // запасной вариант: поворот картинки
-      sctx.clearRect(0, 0, scratch.width, scratch.height);
-      const saveG = g; g = sctx; orig(0, T, ow, oh, it); g = saveG;
-      const cx = x + (w * T) / 2, cy = y + (h * T) / 2;
-      ctx.save(); ctx.imageSmoothingEnabled = false; ctx.translate(Math.round(cx), Math.round(cy)); ctx.rotate((rot * Math.PI) / 2);
-      ctx.drawImage(scratch, -Math.round((ow * T) / 2), -Math.round(T + (oh * T) / 2)); ctx.restore();
-    };
-  }
-
-  // ---------- Двигать мебель ----------
-  const LOCK = [];
-  const TALL = ["bookshelf", "fireplace", "tv"];
-  let editOn = false, sel = null;
-  const hi = document.createElement("div");
-  hi.style.cssText = "position:fixed;border:3px dashed #ff3d7f;background:rgba(255,61,127,.15);pointer-events:none;display:none;z-index:20";
-  document.body.appendChild(hi);
-  const ep = document.createElement("div");
-  ep.style.cssText = "position:fixed;left:0;right:0;bottom:0;background:#fff8f0;border-top:3px solid #6b2d45;border-radius:16px 16px 0 0;padding:10px 12px 14px;display:none;z-index:35;text-align:center;font-size:14px";
-  ep.innerHTML = '<div id="eHint" style="margin-bottom:6px"></div><div id="eArr" style="display:inline-grid;grid-template-columns:repeat(3,54px);gap:5px"></div><div style="margin-top:8px"><button id="eDone" style="border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:15px;padding:9px 18px;margin:3px">Готово ✅</button><button id="eRot" style="border:none;border-radius:12px;background:#6fa8ff;color:#fff;font-size:15px;padding:9px 14px;margin:3px">🔄 Повернуть</button><button id="eReset" style="border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:13px;padding:9px 12px;margin:3px">Всё как было</button></div>';
-  document.body.appendChild(ep);
-  const eArr = ep.querySelector("#eArr"), eHint = ep.querySelector("#eHint");
-  function itemByKey(k) { return LAYOUT.items.find((i) => i.k === k); }
-  function posHi() {
-    const it = sel && itemByKey(sel);
-    if (!editOn || !it) { hi.style.display = "none"; return; }
-    const rc = canvas.getBoundingClientRect();
-    const sc = rc.width / canvas.width;
-    const top0 = TALL.includes(it.t) && !it.rot ? it.y - 1 : it.y;
-    hi.style.left = rc.left + it.x * T * sc + "px";
-    hi.style.top = rc.top + top0 * T * sc + "px";
-    hi.style.width = it.w * T * sc + "px";
-    hi.style.height = (it.y + it.h - top0) * T * sc + "px";
-    hi.style.display = "block";
-  }
-  function canPlace(it, nx, ny, nw, nh, excl) {
-    nw = nw || it.w; nh = nh || it.h;
-    for (let tx = nx; tx < nx + nw; tx++) for (let ty = ny; ty < ny + nh; ty++) {
-      if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return false;
-      const c = tileAt(tx, ty);
-      if (c === "#" || c === "d") return false;
-    }
-    if (it.solid) {
-      const ov = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-      const me = { x: nx, y: ny, w: nw, h: nh };
-      for (const o of LAYOUT.items) if (o !== it && !(excl && excl.has(o)) && o.solid && ov(me, o)) return false;
-      for (const pl of [player, partner]) if (pl && ov(me, { x: Math.floor(pl.x), y: Math.floor(pl.y), w: 1, h: 1 })) return false;
-    }
-    return true;
-  }
-  function setPose(nx, ny, nr, nw, nh) {
-    const it = sel && itemByKey(sel);
-    if (!it) return;
-    if (!canPlace(it, nx, ny, nw, nh)) { showToast("Сюда нельзя 🚫"); return; }
-    const key = keyOf(sel === "tv" ? "tvs" : sel);
-    const cx = curPlan === 1 ? 20 - nx - nw : nx;
-    moved[key] = { x: cx, y: ny, r: nr };
-    applyPlan(curPlan, false);
-    posHi();
-    sendMsg({ type: "move_item", id: key, x: cx, y: ny, r: nr });
-  }
-  function canonRot(it) { return curPlan === 1 ? (4 - (it.rot || 0)) % 4 : it.rot || 0; }
-  function nudge(dx, dy) {
-    const it = sel && itemByKey(sel);
-    if (!it) return;
-    const mem = it.t === "table" ? LAYOUT.items.filter((i) => i.t === "table" || i.t === "chair") : [it];
-    const set = new Set(mem);
-    for (let d = 1; d <= 3; d++) {
-      if (!mem.every((m) => canPlace(m, m.x + dx * d, m.y + dy * d, m.w, m.h, set))) continue;
-      for (const m of mem) {
-        const nx = m.x + dx * d, ny = m.y + dy * d;
-        const cx = curPlan === 1 ? 20 - nx - m.w : nx;
-        const key = keyOf(m.sid === "tv" ? "tvs" : m.k);
-        moved[key] = { x: cx, y: ny, r: canonRot(m) };
-        sendMsg({ type: "move_item", id: key, x: cx, y: ny, r: canonRot(m) });
-      }
-      applyPlan(curPlan, false);
-      posHi();
+// ---------- Покупка монет за звёзды Telegram ----------
+const PACKS = { p15: { stars: 15, coins: 30 }, p50: { stars: 50, coins: 110 }, p100: { stars: 100, coins: 240 }, d15: { stars: 15, coins: 5, donate: true }, d50: { stars: 50, coins: 20, donate: true }, d100: { stars: 100, coins: 50, donate: true } };
+const HOOK_SECRET = crypto.createHash("sha256").update(BOT_TOKEN || "none").digest("hex").slice(0, 32);
+app.post("/tg-webhook", express.json(), (req, res) => {
+  res.sendStatus(200);
+  if (!BOT_TOKEN || req.headers["x-telegram-bot-api-secret-token"] !== HOOK_SECRET) return;
+  const u = req.body || {};
+  try {
+    if (u.pre_checkout_query) {
+      const q = u.pre_checkout_query;
+      const parts = String(q.invoice_payload || "").split(":");
+      const ok = q.currency === "XTR" && parts.length === 3 && houses[parts[0]] && PACKS[parts[2]] && q.total_amount === PACKS[parts[2]].stars;
+      tgApi("answerPreCheckoutQuery", ok ? { pre_checkout_query_id: q.id, ok: true } : { pre_checkout_query_id: q.id, ok: false, error_message: "Не получилось, попробуй ещё раз" });
       return;
     }
-    showToast("Сюда нельзя 🚫");
+    const m = u.message;
+    if (!m) return;
+    if (m.successful_payment) {
+      const sp = m.successful_payment;
+      const parts = String(sp.invoice_payload || "").split(":");
+      const house = houses[parts[0]];
+      const pack = PACKS[parts[2]];
+      if (!house || !pack || sp.currency !== "XTR" || sp.total_amount !== pack.stars) return;
+      if (!house.payments) house.payments = [];
+      if (house.payments.some((p) => p.id === sp.telegram_payment_charge_id)) return;
+      house.payments.push({ id: sp.telegram_payment_charge_id, pack: parts[2], stars: pack.stars, at: Date.now(), by: parts[1] });
+      house.coins += pack.coins;
+      const dAch = pack.donate ? statAdd(house, "donate", 1) : "";
+      notifyHouse(house, (pack.donate ? "Огромное спасибо создателю от всего сердца! 💖 +" : "Спасибо! +") + pack.coins + " 🪙 ❤️" + dAch);
+      markDirty(parts[0], true);
+      broadcast(parts[0]);
+      return;
+    }
+    const txt = String(m.text || "");
+    if (txt.startsWith("/paysupport")) tgApi("sendMessage", { chat_id: m.chat.id, text: process.env.PAY_SUPPORT_TEXT || "Если с оплатой что-то пошло не так, напиши создателю игры, и он всё исправит или вернёт звёзды." });
+    else if (txt.startsWith("/start")) tgApi("sendMessage", { chat_id: m.chat.id, text: "Привет! Это TamoLove: уютный дом для двоих ❤️", reply_markup: { inline_keyboard: [[{ text: "Открыть дом 🏠", url: "https://t.me/TamoLoveGameBot" }]] } });
+  } catch (e) {}
+});
+if (BOT_TOKEN && process.env.RENDER_EXTERNAL_URL) {
+  tgApi("setWebhook", { url: process.env.RENDER_EXTERNAL_URL + "/tg-webhook", secret_token: HOOK_SECRET, allowed_updates: ["message", "pre_checkout_query"] }, (r) => console.log("webhook:", r && r.ok ? "ok" : "ошибка"));
+}
+
+function notifyOffline(code, role, kind, text, cooldownMs) {
+  const house = houses[code];
+  const p = house && house.players[role];
+  if (!p || !p.id || !/^tg\d+$/.test(String(p.id)) || p.notify === false) return;
+  if (live[code] && live[code][role]) return;
+  if (!house.notif) house.notif = {};
+  const key = role + "_" + kind;
+  if (house.notif[key] && Date.now() - house.notif[key] < cooldownMs) return;
+  house.notif[key] = Date.now();
+  tgSend(String(p.id).slice(2), text);
+}
+
+function attach(ws, code, role) {
+  if (!anyLive(code)) catchUp(houses[code]);
+  if (!live[code]) live[code] = {};
+  const old = live[code][role];
+  if (old && old !== ws) {
+    old.house = null;
+    send(old, { type: "kicked" });
+    old.close();
   }
-  function rotate() {
-    const it = sel && itemByKey(sel);
-    if (!it) return;
-    if (it.t === "table") { showToast("Стол со стульями не поворачивается 🪑"); return; }
-    const nr = (canonRot(it) + 1) % 4;
-    const ow = it.ow || it.w, oh = it.oh || it.h;
-    setPose(it.x, it.y, nr, nr % 2 ? oh : ow, nr % 2 ? ow : oh);
+  live[code][role] = ws;
+  ws.house = code;
+  ws.role = role;
+  if (houses[code]) touchStreak(houses[code]);
+  if (houses[code] && houses[code].players[role]) {
+    const other = role === "caregiver" ? "receiver" : "caregiver";
+    notifyOffline(code, other, "enter", houses[code].players[role].name + " зашёл(а) в дом 💞 Загляни!", 45 * 60 * 1000);
   }
-  [["", 0, 0], ["▲", 0, -1], ["", 0, 0], ["◀", -1, 0], ["▼", 0, 1], ["▶", 1, 0]].forEach(([a, dx, dy]) => {
-    const b = document.createElement("button");
-    b.textContent = a;
-    b.style.cssText = "height:48px;border:none;border-radius:12px;font-size:22px;color:#fff;background:" + (a ? "#ff8fb1" : "transparent");
-    if (a) b.onclick = () => nudge(dx, dy);
-    eArr.appendChild(b);
+  send(ws, { type: "joined", code, role });
+  broadcast(code);
+}
+
+// ---------- Действия ----------
+function streakOf(house) {
+  if (!house.streak) house.streak = { count: 0, last: 0, day: "", used: 0, week: "", broken: 0 };
+  return house.streak;
+}
+function touchStreak(house) {
+  const s = streakOf(house);
+  const now = Date.now();
+  const shifted = now + 5 * 3600 * 1000;
+  const wk = Math.floor((shifted / 86400000 + 3) / 7);
+  if (s.week !== wk) { s.week = wk; s.used = 0; }
+  if (s.broken) return;
+  if (s.last && now - s.last > 24 * 3600 * 1000) { s.broken = Math.max(1, s.count); return; }
+  s.last = now;
+  const day = new Date(shifted).toISOString().slice(0, 10);
+  if (s.day !== day) {
+    s.day = day;
+    s.count += 1;
+    const at = achCheck(house);
+    if (at) notifyHouse(house, "Вы вместе уже " + s.count + " дн.!" + at);
+  }
+}
+
+const QUESTS = [
+  { id: "eat", n: "Съесть 5 порций 🍽️", t: 5, r: 5 },
+  { id: "cook", n: "Приготовить 3 блюда 🍳", t: 3, r: 4 },
+  { id: "clean", n: "Убраться 2 раза 🧹", t: 2, r: 3 },
+  { id: "dance", n: "Станцевать вместе 💃", t: 1, r: 4 }
+];
+function today() {
+  return new Date(Date.now() + 5 * 3600 * 1000).toISOString().slice(0, 10);
+}
+function qState(house) {
+  if (!house.quests || house.quests.day !== today()) house.quests = { day: today(), p: {}, done: {} };
+  return house.quests;
+}
+const ACH = [
+  { id: "eat20", n: "Гурманы: 20 порций", s: "eat", t: 20, r: 5 },
+  { id: "eat100", n: "Большие гурманы: 100 порций", s: "eat", t: 100, r: 15 },
+  { id: "cook10", n: "Шеф-повара: 10 блюд", s: "cook", t: 10, r: 5 },
+  { id: "cook50", n: "Мастера кухни: 50 блюд", s: "cook", t: 50, r: 15 },
+  { id: "perf5", n: "5 шедевров на плите", s: "perfect", t: 5, r: 8 },
+  { id: "clean10", n: "Чистюли: 10 уборок", s: "clean", t: 10, r: 5 },
+  { id: "clean40", n: "Блестящий дом: 40 уборок", s: "clean", t: 40, r: 12 },
+  { id: "dance5", n: "Танцоры: 5 танцев", s: "dance", t: 5, r: 6 },
+  { id: "dance20", n: "Звёзды танцпола: 20 танцев", s: "dance", t: 20, r: 15 },
+  { id: "buy5", n: "Новосёлы: 5 покупок", s: "buy", t: 5, r: 5 },
+  { id: "buy12", n: "Дизайнеры: 12 покупок", s: "buy", t: 12, r: 12 },
+  { id: "str3", n: "3 дня вместе", s: "streak", t: 3, r: 3 },
+  { id: "str7", n: "Неделя вместе", s: "streak", t: 7, r: 7 },
+  { id: "str14", n: "Две недели вместе", s: "streak", t: 14, r: 12 },
+  { id: "str30", n: "Месяц вместе", s: "streak", t: 30, r: 25 },
+  { id: "look1", n: "Новый образ", s: "look", t: 1, r: 2 },
+  { id: "plan1", n: "Перестроили дом", s: "plan", t: 1, r: 2 },
+  { id: "donor", n: "Меценат: поддержал создателя 💖", s: "donate", t: 1, r: 10 },
+  { id: "paint1", n: "Свежий ремонт", s: "paint", t: 1, r: 2 }
+];
+function statVal(house, s) {
+  return s === "streak" ? streakOf(house).count : (house.stats && house.stats[s]) || 0;
+}
+function achCheck(house) {
+  if (!house.ach) house.ach = {};
+  let out = "";
+  for (const a of ACH) {
+    if (!house.ach[a.id] && statVal(house, a.s) >= a.t) {
+      house.ach[a.id] = true;
+      house.coins += a.r;
+      out += " 🏆 " + a.n + "! +" + a.r + " 🪙";
+    }
+  }
+  return out;
+}
+function statAdd(house, key, n) {
+  if (!house.stats) house.stats = {};
+  house.stats[key] = (house.stats[key] || 0) + n;
+  return achCheck(house);
+}
+function houseLabel(h) {
+  const names = ROLES.map((r) => h.players[r] && h.players[r].name).filter(Boolean);
+  return names.join(" ❤️ ") || "Дом";
+}
+function friendInfo(c) {
+  const h = houses[c];
+  if (!h) return null;
+  const on = live[c] ? ROLES.filter((r) => live[c][r]).length : 0;
+  return { code: c, label: houseLabel(h), online: on };
+}
+function notifyHouse(house, text) {
+  const code = Object.keys(houses).find((k) => houses[k] === house);
+  if (!code || !live[code]) return;
+  for (const rl of ROLES) if (live[code][rl]) send(live[code][rl], { type: "toast", text });
+}
+function qAdd(house, id, n) {
+  const ach = statAdd(house, id, n);
+  const q = qState(house);
+  const d = QUESTS.find((x) => x.id === id);
+  let out = "";
+  if (d && !q.done[id]) {
+    q.p[id] = (q.p[id] || 0) + n;
+    if (q.p[id] >= d.t) {
+      q.done[id] = true;
+      house.coins += d.r;
+      out = " 🎯 Задание выполнено! +" + d.r + " 🪙";
+    }
+  }
+  return out + ach;
+}
+
+function finishDance(code, d) {
+  const house = houses[code];
+  if (!house || house.dance !== d || d.state !== "play") return;
+  d.state = "done";
+  const team = (d.scores.caregiver || 0) + (d.scores.receiver || 0);
+  let coins = team >= 56 ? 5 : team >= 44 ? 4 : team >= 30 ? 3 : team >= 16 ? 2 : 1;
+  if (house.danceAt && Date.now() - house.danceAt < 120000) coins = 0;
+  house.danceAt = Date.now();
+  house.coins += coins;
+  for (const rl of ROLES) {
+    const p = house.players[rl];
+    if (p) p.mood = clamp(p.mood + 6 + Math.round(team / 8));
+  }
+  const q = qAdd(house, "dance", 1);
+  const text = "Танец окончен! Очки " + team + "/64" + (coins ? " +" + coins + " 🪙" : " (монеты раз в 2 мин)") + q;
+  for (const rl of ROLES) if (live[code] && live[code][rl]) send(live[code][rl], { type: "dance_end", text });
+  markDirty(code, true);
+  broadcast(code);
+}
+
+function doAction(house, role) {
+  const p = house.players[role];
+  const other = house.players[role === "caregiver" ? "receiver" : "caregiver"];
+
+  if (role === "caregiver") {
+    if (near(p, "stove")) {
+      // пока мини-игры нет в приложении, готовим по-старому (потом это уберём)
+      if (p.carrying) return "Ты уже несёшь еду. Отнеси её в миску";
+      p.carrying = true;
+      p.tier = 2;
+      return "Еда готова! 🍲 Неси её к миске или покорми любимого";
+    }
+    if (near(p, "bowl")) {
+      if (!p.carrying) return "Сначала приготовь еду на плите";
+      house.bowl = clamp(house.bowl + FOOD_BOWL[p.tier]);
+      p.carrying = false;
+      return "Миска наполнена 🥣";
+    }
+    // Ведущий съедает своё блюдо за столом (с левой стороны, подальше от миски)
+    if (p.carrying && near(p, "table") && !near(p, "bowl")) {
+      p.satiety = clamp(p.satiety + FOOD_FEED[p.tier] + 10);
+      p.mood = clamp(p.mood + FOOD_MOOD[p.tier] + 2);
+      p.carrying = false;
+      return "Приятного аппетита! 🍽️" + qAdd(house, "eat", 1);
+    }
+    if (p.carrying && other && dist(p, other) < 1.8) {
+      other.satiety = clamp(other.satiety + FOOD_FEED[p.tier]);
+      other.mood = clamp(other.mood + FOOD_MOOD[p.tier] + 3);
+      p.mood = clamp(p.mood + 3);
+      p.carrying = false;
+      return "Накормлено! ❤️" + qAdd(house, "eat", 1);
+    }
+  }
+
+  if (role === "receiver" && near(p, "bowl")) {
+    if (house.bowl < 25) return "В миске пусто. Попроси приготовить еду";
+    house.bowl = clamp(house.bowl - 25);
+    p.satiety = clamp(p.satiety + 25);
+    p.mood = clamp(p.mood + 3);
+    return "Ням-ням! 😋" + qAdd(house, "eat", 1);
+  }
+
+  if (near(p, "bed")) {
+    p.energy = clamp(p.energy + 12);
+    p.mood = clamp(p.mood + 1);
+    return "Отдых 💤";
+  }
+
+  if (near(p, "clean")) {
+    // пока мини-игры нет в приложении, убираем по-старому (потом это уберём)
+    house.clean = clamp(house.clean + (role === "caregiver" ? 8 : 4));
+    p.mood = clamp(p.mood + 1);
+    return "Стало чище ✨";
+  }
+
+  return "Здесь пока нечего делать";
+}
+
+// Готовка: игрок прошёл мини-игру и прислал результат (0-100)
+function doCook(house, role, score) {
+  const p = house.players[role];
+  if (role !== "caregiver") return "Готовит Ведущий 🍳";
+  if (!near(p, "stove")) return "Подойди к плите";
+  if (p.carrying) return "Ты уже несёшь еду. Отнеси её в миску";
+  const s = Math.max(0, Math.min(100, Number(score) || 0));
+  const tier = s >= 80 ? 3 : s >= 50 ? 2 : 1;
+  p.carrying = true;
+  p.tier = tier;
+  house.coins += COOK_COINS[tier];
+  const perf = tier === 3 ? statAdd(house, "perfect", 1) : "";
+  return COOK_TEXT[tier] + " +" + COOK_COINS[tier] + " 🪙" + qAdd(house, "cook", 1) + perf;
+}
+
+// Уборка: игрок оттёр пятна (0-8)
+function doClean(house, role, spots) {
+  const p = house.players[role];
+  if (!near(p, "clean")) return "Подойди к ведру или стиральной машине";
+  const n = Math.max(0, Math.min(8, Math.floor(Number(spots) || 0)));
+  if (n === 0) return "Ничего не удалось оттереть, попробуй ещё раз";
+  const gain = n * 3 * (role === "caregiver" ? 1 : 0.6);
+  house.clean = clamp(house.clean + gain);
+  const coins = n >= 6 ? 2 : n >= 3 ? 1 : 0;
+  house.coins += coins;
+  if (n >= 3) p.mood = clamp(p.mood + 1);
+  return (n >= 6 ? "Блестит! ✨" : "Стало чище ✨") + (coins ? " +" + coins + " 🪙" : "") + (n >= 3 ? qAdd(house, "clean", 1) : "");
+}
+
+// ---------- Время идёт ----------
+setInterval(() => {
+  for (const code of Object.keys(live)) {
+    const house = houses[code];
+    if (!house || !anyLive(code)) continue;
+    let onlineCount = 0;
+    for (const role of ROLES) {
+      const p = house.players[role];
+      if (!p) continue;
+      const online = !!live[code][role];
+      if (online) onlineCount++;
+      const f = (online ? 1 : OFFLINE_FACTOR) * TICK_SECONDS;
+      p.satiety = clamp(p.satiety - RATE.satiety * f);
+      p.energy = clamp(p.energy - RATE.energy * f);
+
+      if (!online && (p.satiety < 25 || p.energy < 25)) {
+        notifyOffline(code, role, "low", (p.satiety < 25 ? "🍖 " + p.name + " проголодался(лась)" : "⚡ " + p.name + " устал(а)") + ". Загляни в дом и позаботься!", 6 * 3600 * 1000);
+      }
+      const low = p.satiety < 30 || p.energy < 30 || house.clean < 30;
+      const good = p.satiety > 50 && p.energy > 50 && house.clean > 50;
+      if (low) p.mood = clamp(p.mood - 0.06 * MOOD_SCALE * f);
+      else if (good) p.mood = clamp(p.mood + 0.03 * MOOD_SCALE * f);
+      else p.mood = clamp(p.mood - 0.01 * MOOD_SCALE * f);
+    }
+    house.clean = clamp(house.clean - RATE.clean * TICK_SECONDS);
+    house.lastSeen = Date.now();
+    markDirty(code, false);
+    broadcast(code);
+  }
+}, TICK_SECONDS * 1000);
+
+// ---------- Связь с телефонами ----------
+wss.on("connection", (ws) => {
+  ws.on("message", (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(raw);
+    } catch (e) {
+      return;
+    }
+    CUR = ws.house && houses[ws.house] ? houses[ws.house] : null;
+    if (CUR && msg.type !== "move" && !ws.visiting) touchStreak(CUR);
+
+    if (msg.type === "visit") {
+      const me = ws.house && houses[ws.house];
+      const code = String(msg.code || "").trim().toUpperCase();
+      const th = houses[code];
+      if (!me || !th || !(th.friends || []).includes(ws.house)) { send(ws, { type: "toast", text: "Этот дом не в друзьях" }); return; }
+      leaveVisit(ws);
+      if (!GUESTS[code]) GUESTS[code] = {};
+      if (Object.keys(GUESTS[code]).length >= 4) { send(ws, { type: "toast", text: "В доме уже много гостей" }); return; }
+      const p = me.players[ws.role];
+      if (!p) return;
+      const base = th.plan === 2 ? SPAWN2.receiver : th.plan === 1 ? { x: 20 - SPAWN.receiver.x, y: SPAWN.receiver.y } : SPAWN.receiver;
+      ws.gid = String(++gidCounter);
+      ws.visiting = code;
+      GUESTS[code][ws.gid] = { ws, name: p.name, look: p.look || null, x: base.x, y: base.y, facing: "down" };
+      send(ws, { type: "visit_ok", code, gid: ws.gid, label: houseLabel(th), x: base.x, y: base.y });
+      notifyHouse(th, p.name + " зашёл(ла) в гости 🎉");
+      broadcast(code);
+      return;
+    }
+    if (msg.type === "chat") {
+      const code = ws.visiting || ws.house;
+      const text = String(msg.text || "").trim().slice(0, 200);
+      if (!code || !houses[code] || !text) return;
+      const now = Date.now();
+      if (ws.lastChat && now - ws.lastChat < 700) return;
+      ws.lastChat = now;
+      let nm = "?";
+      const me = ws.house && houses[ws.house] && houses[ws.house].players[ws.role];
+      if (me) nm = me.name;
+      const m = JSON.stringify({ type: "chat", name: nm, text, guest: !!ws.visiting });
+      if (live[code]) for (const role of ROLES) { const k = live[code][role]; if (k && k.readyState === 1) k.send(m); }
+      const gs = GUESTS[code];
+      if (gs) for (const id of Object.keys(gs)) if (gs[id].ws.readyState === 1) gs[id].ws.send(m);
+      return;
+    }
+    if (msg.type === "leave_visit") {
+      leaveVisit(ws);
+      send(ws, { type: "visit_end" });
+      return;
+    }
+    if (ws.visiting) {
+      if (msg.type === "move") {
+        const g = GUESTS[ws.visiting] && GUESTS[ws.visiting][ws.gid];
+        const x = Number(msg.x), y = Number(msg.y);
+        if (!g || !isFinite(x) || !isFinite(y)) return;
+        g.x = Math.min(19.5, Math.max(0.5, x));
+        g.y = Math.min(13.5, Math.max(0.5, y));
+        if (["up", "down", "left", "right"].includes(msg.facing)) g.facing = msg.facing;
+        broadcast(ws.visiting);
+      }
+      return;
+    }
+
+    if (msg.type === "move_item" || msg.type === "reset_layout") {
+      if (!CUR) return;
+      if (msg.type === "reset_layout") CUR.moved = {};
+      else {
+        const id = String(msg.id || "");
+        const x = Math.floor(Number(msg.x)), y = Math.floor(Number(msg.y));
+        if (!/^[a-z0-9_]{1,30}$/.test(id) || !(x >= 0 && x < 20 && y >= 0 && y < 14)) return;
+        if (!CUR.moved) CUR.moved = {};
+        CUR.moved[id] = { x, y, r: Math.max(0, Math.min(3, Math.floor(Number(msg.r) || 0))) };
+      }
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "buy_coins") {
+      const pk = PACKS[msg.pack];
+      if (!CUR || !pk) return;
+      if (!BOT_TOKEN) { send(ws, { type: "toast", text: "Оплата пока не настроена" }); return; }
+      const wsRef = ws, codeRef = ws.house, roleRef = ws.role, key = msg.pack;
+      tgApi("createInvoiceLink", { title: pk.donate ? "Поддержать создателя" : pk.coins + " монет", description: pk.donate ? "Спасибо, что поддерживаешь TamoLove! Бонус: " + pk.coins + " монет" : "Монеты для дома TamoLove", payload: codeRef + ":" + roleRef + ":" + key, provider_token: "", currency: "XTR", prices: [{ label: pk.coins + " монет", amount: pk.stars }] }, (r) => {
+        if (r && r.ok && r.result) send(wsRef, { type: "invoice", url: r.result });
+        else send(wsRef, { type: "toast", text: "Не получилось создать счёт 😔" });
+      });
+      return;
+    }
+
+    if (msg.type === "notif") {
+      if (!CUR) return;
+      const me = CUR.players[ws.role];
+      if (!me) return;
+      me.notify = !!msg.on;
+      send(ws, { type: "toast", text: me.notify ? "Уведомления включены 🔔" : "Уведомления выключены 🔕" });
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "paint") {
+      if (!CUR) return;
+      if (!CUR.paint) CUR.paint = { wall: null, floor: null };
+      const okv = (v, pre) => v === null || (typeof v === "string" && v.startsWith(pre) && SHOP[v] !== undefined && (CUR.owned || []).includes(v));
+      if (msg.wall !== undefined && okv(msg.wall, "w_")) CUR.paint.wall = msg.wall;
+      if (msg.floor !== undefined && okv(msg.floor, "f_")) CUR.paint.floor = msg.floor;
+      if (msg.wall || msg.floor) notifyHouse(CUR, "Свежий ремонт! 🎨" + statAdd(CUR, "paint", 1));
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "set_plan") {
+      if (!CUR) return;
+      const np = [0, 1, 2].includes(msg.plan) ? msg.plan : 0;
+      const op = CUR.plan || 0;
+      if (op === np) return;
+      CUR.plan = np;
+      const planAch = statAdd(CUR, "plan", 1);
+      for (const rl of ROLES) {
+        const pp = CUR.players[rl];
+        if (!pp) continue;
+        if (np === 2) { pp.x = SPAWN2[rl].x; pp.y = SPAWN2[rl].y; }
+        else if (op === 2) { pp.x = np === 1 ? 20 - SPAWN[rl].x : SPAWN[rl].x; pp.y = SPAWN[rl].y; }
+        else pp.x = 20 - pp.x;
+      }
+      for (const rl of ROLES) if (live[ws.house] && live[ws.house][rl]) send(live[ws.house][rl], { type: "toast", text: "Дом перестроен! 🏠✨" + planAch });
+      markDirty(ws.house, true);
+      broadcast(ws.house);
+      return;
+    }
+
+    if (msg.type === "dance_invite" || msg.type === "dance_answer" || msg.type === "dance_score") {
+      const code = ws.house;
+      if (!code || !houses[code] || !live[code]) return;
+      const house = houses[code];
+      const other = ws.role === "caregiver" ? "receiver" : "caregiver";
+      const osock = live[code][other];
+      if (msg.type === "dance_invite") {
+        if (!osock) { send(ws, { type: "toast", text: "Партнёра нет в игре 😔" }); return; }
+        if (house.dance && Date.now() - house.dance.at < 60000) { send(ws, { type: "toast", text: "Танец уже идёт или ждёт ответа" }); return; }
+        house.dance = { state: "invite", from: ws.role, at: Date.now(), scores: {} };
+        send(osock, { type: "dance_invite", name: (house.players[ws.role] || {}).name || "Партнёр" });
+        send(ws, { type: "toast", text: "Позвали танцевать 💃" });
+        return;
+      }
+      const d = house.dance;
+      if (!d) return;
+      if (msg.type === "dance_answer") {
+        if (d.state !== "invite" || d.from === ws.role) return;
+        const inviter = live[code][d.from];
+        if (!msg.ok) { if (inviter) send(inviter, { type: "toast", text: "Сейчас не хочет танцевать 😔" }); house.dance = null; return; }
+        d.state = "play";
+        d.at = Date.now();
+        const seed = Math.floor(Math.random() * 1e9);
+        for (const rl of ROLES) if (live[code][rl]) send(live[code][rl], { type: "dance_start", seed });
+        setTimeout(() => finishDance(code, d), 40000);
+        return;
+      }
+      if (msg.type === "dance_score") {
+        if (d.state !== "play") return;
+        d.scores[ws.role] = Math.max(0, Math.min(32, Math.floor(Number(msg.hits) || 0)));
+        if (d.scores.caregiver !== undefined && d.scores.receiver !== undefined) finishDance(code, d);
+        return;
+      }
+    }
+
+    if (msg.type === "streak_restore" || msg.type === "streak_reset") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const s = streakOf(houses[code]);
+      if (!s.broken) return;
+      if (msg.type === "streak_restore") {
+        if (s.used >= 4) { send(ws, { type: "toast", text: "Бесплатные восстановления на этой неделе закончились" }); return; }
+        s.used += 1;
+        s.broken = 0;
+        s.last = Date.now();
+        for (const rl of ROLES) if (live[code] && live[code][rl]) send(live[code][rl], { type: "toast", text: "Огонёк снова горит! 🔥" });
+      } else {
+        s.count = 0;
+        s.broken = 0;
+        s.last = 0;
+        s.day = "";
+        touchStreak(houses[code]);
+      }
+      markDirty(code, true);
+      broadcast(code);
+      return;
+    }
+
+    if (msg.type === "friend_add" || msg.type === "friend_answer" || msg.type === "friend_remove") {
+      const mine = ws.house;
+      if (!mine || !houses[mine]) return;
+      const me = houses[mine];
+      const other = String(msg.code || "").trim().toUpperCase();
+      const oh = houses[other];
+      if (!me.friends) me.friends = [];
+      if (!me.fr_in) me.fr_in = {};
+      if (msg.type === "friend_add") {
+        if (!oh || other === mine) { send(ws, { type: "toast", text: "Дом с таким кодом не найден" }); return; }
+        if (me.friends.includes(other)) { send(ws, { type: "toast", text: "Вы уже друзья 💞" }); return; }
+        if (me.fr_in[other]) { send(ws, { type: "toast", text: "Этот дом уже прислал тебе запрос, прими его" }); return; }
+        if (!oh.fr_in) oh.fr_in = {};
+        if (Object.keys(oh.fr_in).length >= 10 || me.friends.length >= 20) { send(ws, { type: "toast", text: "Слишком много запросов или друзей" }); return; }
+        oh.fr_in[mine] = { at: Date.now() };
+        notifyHouse(oh, "Дом «" + houseLabel(me) + "» хочет дружить 👥 Открой «Меню» → «Друзья»");
+        send(ws, { type: "toast", text: "Запрос отправлен 💌" });
+        markDirty(other, true);
+        broadcast(other);
+        return;
+      }
+      if (msg.type === "friend_answer") {
+        if (!me.fr_in[other]) return;
+        delete me.fr_in[other];
+        if (msg.ok && oh) {
+          if (!oh.friends) oh.friends = [];
+          if (!me.friends.includes(other)) me.friends.push(other);
+          if (!oh.friends.includes(mine)) oh.friends.push(mine);
+          notifyHouse(oh, "Дом «" + houseLabel(me) + "» принял дружбу! 🎉");
+          send(ws, { type: "toast", text: "Теперь вы друзья! 🎉" });
+          markDirty(other, true);
+          broadcast(other);
+        }
+        markDirty(mine, true);
+        broadcast(mine);
+        return;
+      }
+      if (msg.type === "friend_remove") {
+        me.friends = me.friends.filter((c) => c !== other);
+        if (oh && oh.friends) oh.friends = oh.friends.filter((c) => c !== mine);
+        markDirty(mine, true);
+        broadcast(mine);
+        if (oh) { markDirty(other, true); broadcast(other); }
+        return;
+      }
+    }
+
+    if (msg.type === "leave_house") {
+      const code = ws.house, role = ws.role;
+      if (!code || !houses[code]) return;
+      const house = houses[code];
+      const name = (house.players[role] || {}).name || "Игрок";
+      delete house.players[role];
+      if (live[code]) delete live[code][role];
+      ws.house = null;
+      ws.role = null;
+      send(ws, { type: "left" });
+      const rest = ROLES.filter((r) => house.players[r]);
+      if (!rest.length) delete houses[code];
+      else {
+        notifyHouse(house, name + " вышел(ла) из дома 👋 Теперь можно пригласить нового человека по коду");
+        markDirty(code, true);
+        broadcast(code);
+      }
+      return;
+    }
+
+    if (msg.type === "create") {
+      const playerId = String(msg.playerId || "");
+      if (!playerId || !ROLES.includes(msg.role)) return;
+      const code = makeCode();
+      houses[code] = { code, players: {}, clean: 80, bowl: 0, coins: 0, lastSeen: Date.now() };
+      houses[code].players[msg.role] = makePlayer(playerId, msg.role, msg.name);
+      markDirty(code, true);
+      attach(ws, code, msg.role);
+      return;
+    }
+
+    if (msg.type === "join") {
+      const playerId = String(msg.playerId || "");
+      const code = String(msg.code || "").trim().toUpperCase();
+      const house = houses[code];
+      if (!playerId) return;
+      if (!house) {
+        send(ws, { type: "error", text: "Дом с таким кодом не найден" });
+        return;
+      }
+      for (const role of ROLES) {
+        const p = house.players[role];
+        if (p && p.id === playerId) {
+          attach(ws, code, role);
+          return;
+        }
+      }
+      const free = ROLES.find((r) => !house.players[r]);
+      if (!free) {
+        send(ws, { type: "error", text: "В этом доме уже двое" });
+        return;
+      }
+      house.players[free] = makePlayer(playerId, free, msg.name);
+      markDirty(code, true);
+      attach(ws, code, free);
+      return;
+    }
+
+    if (msg.type === "move") {
+      if (!ws.house || !houses[ws.house]) return;
+      const p = houses[ws.house].players[ws.role];
+      if (!p) return;
+      const x = Number(msg.x);
+      const y = Number(msg.y);
+      if (!isFinite(x) || !isFinite(y)) return;
+      p.x = Math.min(19.5, Math.max(0.5, x));
+      p.y = Math.min(13.5, Math.max(0.5, y));
+      if (["up", "down", "left", "right"].includes(msg.facing)) {
+        p.facing = msg.facing;
+      }
+      broadcast(ws.house);
+      return;
+    }
+
+    // Ведомый просит присесть за стол к Ведущему
+    if (msg.type === "ask_sit") {
+      const code = ws.house;
+      if (!code || !houses[code] || ws.role !== "receiver") return;
+      const house = houses[code];
+      const me = house.players.receiver;
+      const cg = house.players.caregiver;
+      const sock = live[code] && live[code].caregiver;
+      if (!me || !cg) return;
+      if (!near(me, "table")) { send(ws, { type: "toast", text: "Подойди к столу" }); return; }
+      if (!sock || !cg.carrying || !near(cg, "table")) {
+        send(ws, { type: "toast", text: "За столом сейчас нет еды" });
+        return;
+      }
+      if (Date.now() - (house.sitAsk || 0) < 15000) {
+        send(ws, { type: "toast", text: "Подожди немного, уже спросили" });
+        return;
+      }
+      house.sitAsk = Date.now();
+      send(sock, { type: "sit_request", name: me.name });
+      send(ws, { type: "toast", text: "Спросили, можно ли сесть рядом 🪑" });
+      return;
+    }
+
+    // Ведущий отвечает на просьбу
+    if (msg.type === "sit_answer") {
+      const code = ws.house;
+      if (!code || !houses[code] || ws.role !== "caregiver") return;
+      const house = houses[code];
+      const p = house.players.caregiver;
+      const rec = house.players.receiver;
+      const rsock = live[code] && live[code].receiver;
+      if (!house.sitAsk || Date.now() - house.sitAsk > 30000) {
+        send(ws, { type: "toast", text: "Просьба уже устарела" });
+        return;
+      }
+      house.sitAsk = 0;
+      if (!msg.ok) {
+        send(ws, { type: "toast", text: "Ты отказал 🙅" });
+        if (rsock) send(rsock, { type: "toast", text: "Сейчас нельзя 😔" });
+        return;
+      }
+      if (!p || !rec || !p.carrying || !near(p, "table") || !near(rec, "table")) {
+        send(ws, { type: "toast", text: "Еды уже нет или Ведомый отошёл" });
+        return;
+      }
+      const gain = FOOD_FEED[p.tier] + 10;
+      p.satiety = clamp(p.satiety + gain);
+      rec.satiety = clamp(rec.satiety + gain);
+      p.mood = clamp(p.mood + FOOD_MOOD[p.tier] + 6);
+      rec.mood = clamp(rec.mood + FOOD_MOOD[p.tier] + 6);
+      p.carrying = false;
+      const qt = qAdd(house, "eat", 2);
+      send(ws, { type: "toast", text: "Едите вместе! Вдвоём вкуснее ❤️🍽️" + qt });
+      if (rsock) send(rsock, { type: "toast", text: "Вы едите вместе! Вдвоём вкуснее ❤️🍽️" + qt });
+      markDirty(code, false);
+      broadcast(code);
+      return;
+    }
+
+    if (msg.type === "look") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const me = houses[code].players[ws.role];
+      const L = msg.look;
+      if (!me || !L || typeof L !== "object") return;
+      const hex = (v) => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
+      if (!["human", "animal", "ghost"].includes(L.type)) return;
+      if (!["short", "long", "bun"].includes(L.style)) return;
+      if (!hex(L.skin) || !hex(L.hair) || !hex(L.shirt) || !hex(L.pants)) return;
+      me.look = { type: L.type, style: L.style, skin: L.skin, hair: L.hair, shirt: L.shirt, pants: L.pants };
+      send(ws, { type: "toast", text: "Новый образ! ✨" + statAdd(houses[code], "look", 1) });
+      markDirty(code, true);
+      broadcast(code);
+      return;
+    }
+
+    if (msg.type === "buy") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const house = houses[code];
+      if (!house.players[ws.role]) return;
+      if (!house.owned) house.owned = [];
+      const cost = SHOP[msg.id];
+      if (cost === undefined) return;
+      if (msg.id === "tv" && !house.owned.includes("tvs")) { send(ws, { type: "toast", text: "Сначала нужна тумба 📺" }); return; }
+      if (house.owned.includes(msg.id)) { send(ws, { type: "toast", text: "Это уже куплено ✅" }); return; }
+      if (house.coins < cost) { send(ws, { type: "toast", text: "Не хватает монет 🪙" }); return; }
+      house.coins -= cost;
+      house.owned.push(msg.id);
+      const buyAch = statAdd(house, "buy", 1);
+      for (const rl of ROLES) {
+        if (live[code] && live[code][rl]) send(live[code][rl], { type: "toast", text: "Новая вещь в доме! 🛋️✨" + buyAch });
+      }
+      markDirty(code, true);
+      broadcast(code);
+      return;
+    }
+
+    if (msg.type === "act" || msg.type === "cook" || msg.type === "clean") {
+      const code = ws.house;
+      if (!code || !houses[code]) return;
+      const house = houses[code];
+      if (!house.players[ws.role]) return;
+      const now = Date.now();
+      const gap = msg.type === "act" ? 500 : 3000;
+      if (now - (ws.lastAct || 0) < gap) return;
+      ws.lastAct = now;
+      let text;
+      if (msg.type === "cook") text = doCook(house, ws.role, msg.score);
+      else if (msg.type === "clean") text = doClean(house, ws.role, msg.spots);
+      else text = doAction(house, ws.role);
+      send(ws, { type: "toast", text });
+      markDirty(code, false);
+      broadcast(code);
+      return;
+    }
+    // сообщения "ping" просто держат связь живой
   });
-  function setEdit(on) {
-    editOn = on; sel = null;
-    ep.style.display = on ? "block" : "none";
-    eHint.textContent = "Нажми на мебель, потом двигай стрелками 👆";
-    posHi();
-  }
-  ep.querySelector("#eRot").onclick = rotate;
-  ep.querySelector("#eDone").onclick = () => setEdit(false);
-  ep.querySelector("#eReset").onclick = () => { moved = {}; applyPlan(curPlan, false); sel = null; posHi(); sendMsg({ type: "reset_layout" }); };
-  canvas.addEventListener("pointerdown", (e) => {
-    if (!editOn) return;
-    e.stopPropagation();
-    const rc = canvas.getBoundingClientRect();
-    const tx = Math.floor(((e.clientX - rc.left) / rc.width) * COLS);
-    const ty = Math.floor(((e.clientY - rc.top) / rc.height) * ROWS);
-    let hit = null;
-    for (const it of LAYOUT.items) {
-      if (tx >= it.x && tx < it.x + it.w && (ty >= it.y && ty < it.y + it.h || !it.rot && TALL.includes(it.t) && ty === it.y - 1)) hit = it;
-    }
-    if (!hit) { sel = null; posHi(); return; }
-    if (hit.t === "chair") hit = LAYOUT.items.find((i) => i.t === "table") || hit;
-    if (LOCK.includes(hit.t)) { showToast("Это двигать нельзя: на нём держится игра 🔒"); return; }
-    sel = hit.sid === "tv" ? "tvs" : hit.k;
-    eHint.textContent = "Выбрано. Двигай стрелками 👇";
-    posHi();
-  }, true);
-  window.addEventListener("resize", posHi);
-  const editBtn = document.createElement("button");
-  editBtn.textContent = "🛋️ Двигать мебель";
-  editBtn.style.cssText = "border:none;border-radius:10px;background:#8fbf8f;color:#fff";
-  editBtn.onclick = () => setEdit(true);
 
-  // меню: прячем лишние кнопки
-  const menu = document.createElement("div");
-  menu.style.cssText = "position:fixed;top:44px;right:8px;background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:8px;display:none;flex-direction:column;gap:6px;z-index:25;min-width:170px";
-  document.body.appendChild(menu);
-  const menuBtn = document.createElement("button");
-  menuBtn.textContent = "☰ Меню";
-  menuBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#6b2d45;color:#fff;font-size:13px;padding:4px 10px";
-  menuBtn.onclick = () => { menu.style.display = menu.style.display === "flex" ? "none" : "flex"; };
-  for (const b of [document.getElementById("inviteBtn"), shopBtn, editBtn, qBtn, dBtn, planBtn, document.getElementById("themeBtn")]) {
-    if (!b) continue;
-    b.style.margin = "0";
-    b.style.fontSize = "15px";
-    b.style.padding = "9px 12px";
-    b.addEventListener("click", () => { menu.style.display = "none"; });
-    menu.appendChild(b);
-  }
-  if (top) top.appendChild(menuBtn);
-
-
-  // ---------- Игра открыта в другом окне ----------
-  const prevH8 = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "kicked") {
-      try { ws.onclose = () => {}; ws.close(); } catch (e) {}
-      const k = document.createElement("div");
-      k.style.cssText = "position:fixed;inset:0;background:#ffe4ec;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px";
-      k.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:18px;max-width:340px;text-align:center;color:#6b2d45"><div style="font-size:40px">🪟</div><b style="font-size:17px">Игра открыта в другом окне</b><p style="font-size:14px">Закрой лишние окна или вкладки с игрой. Если хочешь играть здесь, нажми кнопку.</p><button id="kBtn" style="width:100%;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:17px;padding:12px">Играть здесь</button></div>';
-      document.body.appendChild(k);
-      document.getElementById("kBtn").onclick = () => location.reload();
-      return;
-    }
-    prevH8(msg);
-  };
-
-
-  // ---------- Звуки, музыка, анимации, достижения ----------
-  let sndOn = true, musOn = false;
-  try { sndOn = localStorage.getItem("tl_snd") !== "0"; musOn = localStorage.getItem("tl_mus") === "1"; } catch (e) {}
-  let AC = null;
-  function actx() {
-    if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
-    if (AC.state === "suspended") AC.resume();
-    return AC;
-  }
-  function tone(f, d, type, vol, delay) {
-    const a = actx();
-    if (!a) return;
-    const t0 = a.currentTime + (delay || 0);
-    const o = a.createOscillator(), gn = a.createGain();
-    o.type = type || "sine"; o.frequency.value = f;
-    gn.gain.setValueAtTime(0.0001, t0);
-    gn.gain.exponentialRampToValueAtTime(vol || 0.05, t0 + 0.02);
-    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
-    o.connect(gn); gn.connect(a.destination);
-    o.start(t0); o.stop(t0 + d + 0.05);
-  }
-  const SFX = {
-    tick: () => tone(660, 0.05, "triangle", 0.03),
-    coin: () => { tone(988, 0.08, "square", 0.04); tone(1319, 0.2, "square", 0.04, 0.08); },
-    ok: () => { tone(523, 0.12, "triangle", 0.06); tone(659, 0.12, "triangle", 0.06, 0.1); tone(784, 0.2, "triangle", 0.06, 0.2); },
-    bad: () => { tone(220, 0.15, "sawtooth", 0.04); tone(165, 0.2, "sawtooth", 0.04, 0.12); },
-    heart: () => { tone(784, 0.15, "sine", 0.06); tone(988, 0.25, "sine", 0.06, 0.12); },
-    win: () => { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.18, "triangle", 0.06, i * 0.12)); },
-    hit: () => tone(880, 0.1, "triangle", 0.06),
-    miss: () => tone(180, 0.1, "sawtooth", 0.03)
-  };
-  window.TLSfx = { hit: () => sndOn && SFX.hit(), miss: () => sndOn && SFX.miss() };
-  const play = (n) => { if (sndOn) SFX[n](); };
-  document.addEventListener("click", (e) => { if (e.target.closest && e.target.closest("button")) play("tick"); }, true);
-  window.addEventListener("pointerdown", () => actx(), { once: true });
-  // музыка: мягкая мелодия
-  const SC = [262, 294, 330, 392, 440, 523];
-  const MEL = [0, 2, 3, 2, 4, 3, 2, 0, 1, 2, 3, 5, 4, 3, 2, 1];
-  let mi = 0;
-  setInterval(() => {
-    if (!musOn || document.hidden) return;
-    const n = MEL[mi % MEL.length];
-    tone(SC[n], 0.7, "sine", 0.018);
-    if (mi % 4 === 0) tone(SC[n] / 2, 1.6, "triangle", 0.015);
-    mi++;
-  }, 520);
-  function floatFx(em, n) {
-    const fr = document.getElementById("frame");
-    if (!fr) return;
-    for (let i = 0; i < n; i++) {
-      const el = document.createElement("span");
-      el.textContent = em;
-      el.style.cssText = "position:absolute;pointer-events:none;font-size:22px;z-index:6;left:" + (15 + Math.random() * 70) + "%;bottom:" + (20 + Math.random() * 20) + "%";
-      fr.appendChild(el);
-      const a = el.animate([{ transform: "translateY(0) scale(.6)", opacity: 0 }, { opacity: 1, offset: 0.2 }, { transform: "translateY(-90px) scale(1.2)", opacity: 0 }], { duration: 1300 + Math.random() * 600, delay: i * 120 });
-      a.onfinish = () => el.remove();
-    }
-  }
-  const prevH9 = handleMessage;
-  handleMessage = function (msg) {
-    prevH9(msg);
-    if (msg && (msg.type === "toast" || msg.type === "dance_end") && msg.text) {
-      const t = msg.text;
-      if (t.includes("🏆")) { play("win"); floatFx("🏆", 3); floatFx("🎉", 4); }
-      else if (t.includes("🎯")) { play("ok"); floatFx("🎯", 3); }
-      else if (t.includes("🪙") && t.includes("+")) { play("coin"); floatFx("🪙", 4); }
-      else if (t.includes("🚫") || t.includes("Не хватает") || t.includes("нельзя")) play("bad");
-      else if (t.includes("❤️")) { play("heart"); floatFx("❤️", 5); }
-      else if (t.includes("✨")) { play("ok"); floatFx("✨", 5); }
-      else if (t.includes("🍽️") || t.includes("Ням")) { play("ok"); floatFx("😋", 2); }
-    }
-  };
-  // кнопки в меню
-  function menuToggle(label, get, set) {
-    const b = document.createElement("button");
-    const paintB = () => { b.textContent = label + (get() ? ": вкл" : ": выкл"); };
-    b.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#8fa6d9;color:#fff";
-    b.onclick = (e) => { e.stopPropagation(); set(!get()); paintB(); actx(); };
-    paintB();
-    menu.appendChild(b);
-  }
-  menuToggle("🔊 Звуки", () => sndOn, (v) => { sndOn = v; try { localStorage.setItem("tl_snd", v ? "1" : "0"); } catch (e) {} });
-  menuToggle("🎵 Музыка", () => musOn, (v) => { musOn = v; try { localStorage.setItem("tl_mus", v ? "1" : "0"); } catch (e) {} });
-  // достижения
-  let achs = [];
-  const aBox = document.createElement("div");
-  aBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
-  aBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;max-height:85%;overflow:auto;text-align:center"><b style="font-size:18px">🏆 Достижения</b><div id="aList"></div><button id="aClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
-  document.body.appendChild(aBox);
-  function renderA() {
-    const box = document.getElementById("aList");
-    box.innerHTML = "";
-    const done = achs.filter((a) => a.d).length;
-    const h = document.createElement("div");
-    h.style.cssText = "font-size:12px;margin:4px 0 8px";
-    h.textContent = "Получено: " + done + " из " + achs.length + ". Награда падает в общий счёт 🪙";
-    box.appendChild(h);
-    for (const a of achs) {
-      const d = document.createElement("div");
-      d.style.cssText = "text-align:left;margin:7px 0;font-size:14px;opacity:" + (a.d ? 1 : 0.85);
-      d.innerHTML = (a.d ? "🏆 " : "🔒 ") + a.n + " <b>+" + a.r + " 🪙</b>" + '<div style="height:7px;background:#f3d3de;border-radius:5px;overflow:hidden;margin-top:3px"><div style="height:100%;width:' + Math.round((a.p / a.t) * 100) + '%;background:' + (a.d ? "#7ed08a" : "#ff8fb1") + '"></div></div><small>' + a.p + " / " + a.t + "</small>";
-      box.appendChild(d);
-    }
-  }
-  const aBtn = document.createElement("button");
-  aBtn.textContent = "🏆 Достижения";
-  aBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#e0a030;color:#fff";
-  aBtn.onclick = () => { renderA(); aBox.style.display = "flex"; menu.style.display = "none"; };
-  menu.insertBefore(aBtn, menu.children[3] || null);
-  document.getElementById("aClose").onclick = () => { aBox.style.display = "none"; };
-  const prevH10 = handleMessage;
-  handleMessage = function (msg) {
-    prevH10(msg);
-    if (msg && msg.type === "state" && msg.house && Array.isArray(msg.house.ach)) {
-      achs = msg.house.ach;
-      if (aBox.style.display === "flex") renderA();
-    }
-  };
-
-
-  // ---------- Уведомления Telegram: кнопка в меню ----------
-  let notifOn = true;
-  const nb = document.createElement("button");
-  nb.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#6fb7a0;color:#fff";
-  const paintN = () => { nb.textContent = "🔔 Уведомления" + (notifOn ? ": вкл" : ": выкл"); };
-  paintN();
-  nb.onclick = () => { sendMsg({ type: "notif", on: !notifOn }); };
-  menu.appendChild(nb);
-  const prevH11 = handleMessage;
-  handleMessage = function (msg) {
-    prevH11(msg);
-    if (msg && msg.type === "state" && msg.players && myRole && msg.players[myRole] && typeof msg.players[myRole].notify === "boolean") {
-      notifOn = msg.players[myRole].notify; paintN();
-    }
-  };
-
-
-  // ---------- Монеты за звёзды Telegram ----------
-  const PK = [["p15", 15, 30], ["p50", 50, 110], ["p100", 100, 240]];
-  const pay = document.createElement("div");
-  pay.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:40;align-items:center;justify-content:center";
-  pay.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:340px;text-align:center"><b style="font-size:18px">💰 Купить монеты</b><div style="font-size:12px;margin:4px 0 8px">Оплата звёздами Telegram ⭐. Монеты общие для вас обоих.</div><div id="payList"></div><button id="payClose" style="margin-top:8px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
-  document.body.appendChild(pay);
-  const pl = pay.querySelector("#payList");
-  for (const p of PK) {
-    const b = document.createElement("button");
-    b.style.cssText = "display:block;width:100%;margin:6px 0;border:none;border-radius:12px;background:#ffb347;color:#fff;font-size:17px;padding:12px";
-    b.textContent = "🪙 " + p[2] + "  за  " + p[1] + " ⭐";
-    b.onclick = () => sendMsg({ type: "buy_coins", pack: p[0] });
-    pl.appendChild(b);
-  }
-  const dh = document.createElement("div");
-  dh.innerHTML = "<b>💖 Поддержать создателя</b><br><small>Спасибо! В подарок немного монет и достижение</small>";
-  dh.style.margin = "12px 0 4px";
-  pl.appendChild(dh);
-  for (const p of [["d15", 15, 5], ["d50", 50, 20], ["d100", 100, 50]]) {
-    const b = document.createElement("button");
-    b.style.cssText = "display:inline-block;margin:3px;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:15px;padding:10px 12px";
-    b.textContent = p[1] + " ⭐ (+" + p[2] + " 🪙)";
-    b.onclick = () => sendMsg({ type: "buy_coins", pack: p[0] });
-    pl.appendChild(b);
-  }
-  pay.querySelector("#payClose").onclick = () => { pay.style.display = "none"; };
-  const payBtn = document.createElement("button");
-  payBtn.textContent = "💰 Купить монеты";
-  payBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#ffb347;color:#fff";
-  payBtn.onclick = () => { pay.style.display = "flex"; menu.style.display = "none"; };
-  menu.appendChild(payBtn);
-  const prevH12 = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "invoice") {
-      const tg = window.Telegram && Telegram.WebApp;
-      if (tg && tg.openInvoice) {
-        tg.openInvoice(msg.url, (st) => { if (st === "paid") showToast("Оплата прошла, монеты скоро придут ✨"); else if (st === "failed") showToast("Оплата не прошла 😔"); });
-      } else showToast("Оплата работает только внутри Telegram");
-      return;
-    }
-    prevH12(msg);
-  };
-
-
-  // ---------- Выйти из дома ----------
-  const lv = document.createElement("div");
-  lv.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:45;align-items:center;justify-content:center";
-  lv.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:16px;width:90%;max-width:330px;text-align:center;color:#6b2d45"><div style="font-size:36px">🚪</div><b style="font-size:17px">Выйти из дома насовсем?</b><p style="font-size:14px">Ты покинешь этот дом, а второй участник останется. Вернуться можно только если он снова пригласит тебя по коду.</p><button id="lvYes" style="width:100%;border:none;border-radius:12px;background:#e0504f;color:#fff;font-size:16px;padding:12px">Да, выйти</button><button id="lvNo" style="width:100%;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:12px;margin-top:8px">Остаться</button></div>';
-  document.body.appendChild(lv);
-  lv.querySelector("#lvNo").onclick = () => { lv.style.display = "none"; };
-  lv.querySelector("#lvYes").onclick = () => { sendMsg({ type: "leave_house" }); lv.style.display = "none"; };
-  const lvBtn = document.createElement("button");
-  lvBtn.textContent = "🚪 Выйти из дома";
-  lvBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#c9707a;color:#fff";
-  lvBtn.onclick = () => { lv.style.display = "flex"; menu.style.display = "none"; };
-  menu.appendChild(lvBtn);
-  const prevH13 = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "left") {
-      try { localStorage.removeItem("tamolove_code"); } catch (e) {}
-      location.reload();
-      return;
-    }
-    prevH13(msg);
-    if (msg && msg.type === "state" && msg.players && partnerRole && !msg.players[partnerRole]) {
-      partner.present = false;
-      partnerInfo.textContent = "Ждём второго игрока";
-    }
-  };
-
-
-  // ---------- Друзья ----------
-  let fr = { friends: [], requests: [] };
-  const frBox = document.createElement("div");
-  frBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
-  frBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;max-height:85%;overflow:auto;text-align:center;color:#6b2d45"><b style="font-size:18px">👥 Друзья</b><div id="frList"></div><div style="margin-top:10px"><input id="frCode" maxlength="5" placeholder="КОД ДОМА" autocapitalize="characters" autocomplete="off" style="width:60%;font-size:16px;padding:8px;border:2px solid #e0a0b8;border-radius:10px;text-align:center"><button id="frAdd" style="margin-left:6px;border:none;border-radius:10px;background:#ff6f91;color:#fff;font-size:15px;padding:10px 12px">Добавить</button></div><button id="frClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
-  document.body.appendChild(frBox);
-  function renderFr() {
-    const box = frBox.querySelector("#frList");
-    box.innerHTML = "";
-    const mk = (txt, btns) => {
-      const d = document.createElement("div");
-      d.style.cssText = "display:flex;align-items:center;gap:6px;margin:7px 0;text-align:left;font-size:14px";
-      const sp = document.createElement("span");
-      sp.style.flex = "1";
-      sp.textContent = txt;
-      d.appendChild(sp);
-      for (const b of btns) {
-        const el = document.createElement("button");
-        el.textContent = b[0];
-        el.style.cssText = "border:none;border-radius:9px;color:#fff;font-size:13px;padding:7px 9px;background:" + b[1];
-        el.onclick = b[2];
-        d.appendChild(el);
+  ws.on("close", () => {
+    leaveVisit(ws);
+    const code = ws.house;
+    if (code && live[code] && live[code][ws.role] === ws) {
+      delete live[code][ws.role];
+      if (houses[code]) {
+        if (!anyLive(code)) houses[code].lastSeen = Date.now();
+        const pl = houses[code].players[ws.role];
+        if (pl) {
+          pl.seen = Date.now();
+          // уходит спать: встаёт у кровати
+          const hz = houses[code];
+          const bz = zonesFor(hz).bed[0];
+          if (bz) {
+            const frac = ws.role === "caregiver" ? 0.3 : 0.7;
+            let sx = bz.w >= bz.h ? bz.x + bz.w * frac : bz.x + bz.w / 2;
+            if (hz.plan === 1) sx = 20 - sx;
+            pl.x = Math.min(19.5, Math.max(0.5, sx));
+            pl.y = Math.min(13.5, bz.y + bz.h + 0.02);
+          }
+        }
+        markDirty(code, true);
       }
-      box.appendChild(d);
-    };
-    if (fr.requests.length) { const h = document.createElement("div"); h.innerHTML = "<b>Запросы</b>"; h.style.margin = "8px 0 2px"; box.appendChild(h); }
-    for (const q of fr.requests) mk("💌 " + q.label, [["Принять", "#7ed08a", () => sendMsg({ type: "friend_answer", code: q.code, ok: true })], ["Нет", "#c9707a", () => sendMsg({ type: "friend_answer", code: q.code, ok: false })]]);
-    const h2 = document.createElement("div");
-    h2.innerHTML = "<b>Мои друзья</b>" + (fr.friends.length ? "" : "<br><small>Пока никого. Введи код дома друзей ниже.</small>");
-    h2.style.margin = "8px 0 2px";
-    box.appendChild(h2);
-    for (const f of fr.friends) mk((f.online ? "🟢 " : "⚪ ") + f.label + " · " + f.code, [["В гости", "#7ed08a", () => { frBox.style.display = "none"; sendMsg({ type: "visit", code: f.code }); }], ["✕", "#c9b0b8", () => sendMsg({ type: "friend_remove", code: f.code })]]);
-  }
-  const frBtn = document.createElement("button");
-  frBtn.textContent = "👥 Друзья";
-  frBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#6fa8ff;color:#fff";
-  frBtn.onclick = () => { renderFr(); frBox.style.display = "flex"; menu.style.display = "none"; };
-  menu.appendChild(frBtn);
-  frBox.querySelector("#frClose").onclick = () => { frBox.style.display = "none"; };
-  frBox.querySelector("#frAdd").onclick = () => {
-    const inp = frBox.querySelector("#frCode");
-    const c = inp.value.trim().toUpperCase();
-    if (c) { sendMsg({ type: "friend_add", code: c }); inp.value = ""; }
-  };
-  const prevH14 = handleMessage;
-  handleMessage = function (msg) {
-    prevH14(msg);
-    if (msg && msg.type === "state" && msg.house) {
-      fr = { friends: msg.house.friends || [], requests: msg.house.requests || [] };
-      frBtn.textContent = "👥 Друзья" + (fr.requests.length ? " (" + fr.requests.length + ")" : "");
-      if (frBox.style.display === "flex") renderFr();
+      broadcast(code);
     }
-  };
+  });
+});
 
-
-  // ---------- Гости: чужие герои как «npc» и режим похода в гости ----------
-  const NPCS = {};
-  const FALLBACK_LOOK = { type: "human", style: "short", skin: "#f5c9a0", hair: "#5a3825", shirt: "#6fa8ff", pants: "#4a5a8a" };
-  function setNpcs(prefix, list, skipId) {
-    const keep = {};
-    for (const d of list) {
-      if (d.id === skipId) continue;
-      const id = prefix + d.id;
-      keep[id] = true;
-      let n = NPCS[id];
-      if (!n) {
-        n = NPCS[id] = { c: { x: d.x, y: d.y, tx: d.x, ty: d.y, facing: d.facing || "down" }, item: { t: "npc", id, k: "npc_" + id, x: d.x, y: d.y, w: 1, h: 0.4, solid: false } };
-      }
-      n.c.tx = d.x; n.c.ty = d.y; n.c.facing = d.facing || "down";
-      n.look = d.look || FALLBACK_LOOK; n.name = d.name; n.online = d.online !== false; n.role = d.role || null;
-    }
-    for (const id of Object.keys(NPCS)) if (id.startsWith(prefix) && !keep[id]) delete NPCS[id];
-    syncOwned();
-  }
-  SPR.npc = (x, y, w, h, it) => {
-    const n = NPCS[it.id];
-    if (!n) return;
-    if (!n.online && n.role) {
-      const sp = bedSpot(n.role);
-      if (sp) { drawLying(n.look, sp); return; }
-    }
-    drawCharacter(n.c, n.look, false);
-    drawName(n.c, n.name || "Гость", false);
-  };
-  (function loop() {
-    for (const id of Object.keys(NPCS)) {
-      const n = NPCS[id], c = n.c;
-      c.x += (c.tx - c.x) * 0.25; c.y += (c.ty - c.y) * 0.25;
-      n.item.x = c.x; n.item.y = c.y - 0.025;
-    }
-    requestAnimationFrame(loop);
-  })();
-  let visiting = null, myGid = null;
-  const vb = document.createElement("div");
-  vb.style.cssText = "position:fixed;left:0;right:0;top:0;background:#6fa8ff;color:#fff;font-size:14px;font-weight:bold;padding:8px;text-align:center;z-index:60;display:none";
-  document.body.appendChild(vb);
-  const prevH15 = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "visit_ok") {
-      visiting = msg.code; myGid = msg.gid; window.TLVisit = true;
-      vb.innerHTML = '🏡 Ты в гостях: ' + msg.label + ' <button id="vHome" style="margin-left:8px;border:none;border-radius:8px;background:#fff;color:#3a6fb0;font-size:13px;padding:4px 10px">Домой</button>';
-      vb.style.display = "block";
-      document.getElementById("vHome").onclick = () => sendMsg({ type: "leave_visit" });
-      player.x = msg.x; player.y = msg.y;
-      for (const id of Object.keys(NPCS)) delete NPCS[id];
-      return;
-    }
-    if (msg && msg.type === "visit_end") { location.reload(); return; }
-    if (visiting) {
-      if (msg && msg.type === "visit_state") {
-        const st = msg.state, H = st.house || {};
-        prevH15({ type: "state", code: st.code, players: {}, house: { clean: H.clean, bowl: H.bowl, plan: H.plan, moved: H.moved, owned: H.owned, paint: H.paint } });
-        const list = [];
-        for (const rl of ["caregiver", "receiver"]) { const p = st.players && st.players[rl]; if (p) list.push(Object.assign({ id: rl, role: rl }, p)); }
-        setNpcs("r_", list);
-        setNpcs("g_", H.guests || [], myGid);
-      } else if (msg && msg.type === "toast") prevH15(msg);
-      return;
-    }
-    prevH15(msg);
-    if (msg && msg.type === "state" && msg.house && Array.isArray(msg.house.guests)) setNpcs("g_", msg.house.guests);
-  };
-
-
-  // ---------- Чат дома ----------
-  const chatLog = [];
-  const cb = document.createElement("div");
-  cb.style.cssText = "position:fixed;left:8px;right:8px;top:64px;z-index:55;font-family:sans-serif;pointer-events:none";
-  cb.innerHTML = '<div id="cLog" style="display:none;width:100%;box-sizing:border-box;max-height:170px;pointer-events:auto;overflow-y:auto;background:rgba(40,20,30,.85);color:#fff;font-size:13px;border-radius:10px;padding:6px;margin-bottom:4px"></div>' +
-    '<div id="cRow" style="display:none;gap:4px;pointer-events:auto"><input id="cIn" maxlength="200" placeholder="Сообщение…" style="flex:1;min-width:0;font-size:16px;border-radius:8px;border:none;padding:6px"><button id="cSend" style="border:none;border-radius:8px;background:#6fa8ff;color:#fff;padding:6px 10px">➤</button></div>' +
-    '';
-  document.body.appendChild(cb);
-  const cLog = cb.querySelector("#cLog"), cRow = cb.querySelector("#cRow"), cIn = cb.querySelector("#cIn");
-  const cBtn = document.createElement("button");
-  cBtn.textContent = "💬";
-  cBtn.style.cssText = "margin-left:6px;border:none;border-radius:10px;background:#6b2d45;color:#fff;font-size:13px;padding:4px 10px";
-  { const tp = document.querySelector("#top, .top, header") || menuBtn.parentNode; tp.appendChild(cBtn); }
-  let cOpen = false;
-  function renderChat() {
-    cLog.innerHTML = "";
-    for (const m of chatLog.slice(-30)) {
-      const d = document.createElement("div");
-      d.textContent = (m.guest ? "🏃 " : "") + m.name + ": " + m.text;
-      cLog.appendChild(d);
-    }
-    cLog.scrollTop = cLog.scrollHeight;
-  }
-  cBtn.onclick = () => {
-    cOpen = !cOpen;
-    cLog.style.display = cOpen ? "block" : "none";
-    cRow.style.display = cOpen ? "flex" : "none";
-    cBtn.textContent = "💬";
-    if (cOpen) { renderChat(); cIn.focus(); }
-  };
-  function sendChat() {
-    const t = cIn.value.trim();
-    if (!t) return;
-    sendMsg({ type: "chat", text: t });
-    cIn.value = "";
-  }
-  cb.querySelector("#cSend").onclick = sendChat;
-  cIn.onkeydown = (e) => { if (e.key === "Enter") sendChat(); e.stopPropagation(); };
-  cIn.onkeyup = (e) => e.stopPropagation();
-  const prevH16 = handleMessage;
-  handleMessage = function (msg) {
-    if (msg && msg.type === "chat") {
-      chatLog.push(msg);
-      if (cOpen) renderChat(); else { cBtn.textContent = "💬●"; }
-      return;
-    }
-    prevH16(msg);
-  };
-
-  window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
-})();
+// ---------- Запуск ----------
+async function start() {
+  await initStorage();
+  for (const code of Object.keys(houses)) ensureHouse(houses[code]);
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log("TamoLove запущен на порту " + PORT);
+  });
+}
+start();
