@@ -344,6 +344,8 @@ function publicState(code) {
       plan: house.plan || 0,
       moved: house.moved || {},
       paint: house.paint || { wall: null, floor: null },
+      friends: (house.friends || []).map(friendInfo).filter(Boolean),
+      requests: Object.keys(house.fr_in || {}).map((c) => ({ code: c, label: houses[c] ? houseLabel(houses[c]) : "Дом" })),
       ach: ACH.map((a) => ({ id: a.id, n: a.n, p: Math.min(a.t, statVal(house, a.s)), t: a.t, r: a.r, d: !!(house.ach && house.ach[a.id]) })),
       streak: { count: streakOf(house).count, broken: streakOf(house).broken, left: Math.max(0, 4 - streakOf(house).used) },
       quests: QUESTS.map((d) => {
@@ -547,6 +549,16 @@ function statAdd(house, key, n) {
   if (!house.stats) house.stats = {};
   house.stats[key] = (house.stats[key] || 0) + n;
   return achCheck(house);
+}
+function houseLabel(h) {
+  const names = ROLES.map((r) => h.players[r] && h.players[r].name).filter(Boolean);
+  return names.join(" ❤️ ") || "Дом";
+}
+function friendInfo(c) {
+  const h = houses[c];
+  if (!h) return null;
+  const on = live[c] ? ROLES.filter((r) => live[c][r]).length : 0;
+  return { code: c, label: houseLabel(h), online: on };
 }
 function notifyHouse(house, text) {
   const code = Object.keys(houses).find((k) => houses[k] === house);
@@ -845,6 +857,53 @@ wss.on("connection", (ws) => {
       markDirty(code, true);
       broadcast(code);
       return;
+    }
+
+    if (msg.type === "friend_add" || msg.type === "friend_answer" || msg.type === "friend_remove") {
+      const mine = ws.house;
+      if (!mine || !houses[mine]) return;
+      const me = houses[mine];
+      const other = String(msg.code || "").trim().toUpperCase();
+      const oh = houses[other];
+      if (!me.friends) me.friends = [];
+      if (!me.fr_in) me.fr_in = {};
+      if (msg.type === "friend_add") {
+        if (!oh || other === mine) { send(ws, { type: "toast", text: "Дом с таким кодом не найден" }); return; }
+        if (me.friends.includes(other)) { send(ws, { type: "toast", text: "Вы уже друзья 💞" }); return; }
+        if (me.fr_in[other]) { send(ws, { type: "toast", text: "Этот дом уже прислал тебе запрос, прими его" }); return; }
+        if (!oh.fr_in) oh.fr_in = {};
+        if (Object.keys(oh.fr_in).length >= 10 || me.friends.length >= 20) { send(ws, { type: "toast", text: "Слишком много запросов или друзей" }); return; }
+        oh.fr_in[mine] = { at: Date.now() };
+        notifyHouse(oh, "Дом «" + houseLabel(me) + "» хочет дружить 👥 Открой «Меню» → «Друзья»");
+        send(ws, { type: "toast", text: "Запрос отправлен 💌" });
+        markDirty(other, true);
+        broadcast(other);
+        return;
+      }
+      if (msg.type === "friend_answer") {
+        if (!me.fr_in[other]) return;
+        delete me.fr_in[other];
+        if (msg.ok && oh) {
+          if (!oh.friends) oh.friends = [];
+          if (!me.friends.includes(other)) me.friends.push(other);
+          if (!oh.friends.includes(mine)) oh.friends.push(mine);
+          notifyHouse(oh, "Дом «" + houseLabel(me) + "» принял дружбу! 🎉");
+          send(ws, { type: "toast", text: "Теперь вы друзья! 🎉" });
+          markDirty(other, true);
+          broadcast(other);
+        }
+        markDirty(mine, true);
+        broadcast(mine);
+        return;
+      }
+      if (msg.type === "friend_remove") {
+        me.friends = me.friends.filter((c) => c !== other);
+        if (oh && oh.friends) oh.friends = oh.friends.filter((c) => c !== mine);
+        markDirty(mine, true);
+        broadcast(mine);
+        if (oh) { markDirty(other, true); broadcast(other); }
+        return;
+      }
     }
 
     if (msg.type === "leave_house") {
