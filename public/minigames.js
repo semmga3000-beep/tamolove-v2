@@ -1735,5 +1735,51 @@
     if (msg && msg.type === "state" && msg.house && Array.isArray(msg.house.guests)) setNpcs("g_", msg.house.guests);
   };
 
+
+  // ---------- Чат дома ----------
+  const chatLog = [];
+  const cb = document.createElement("div");
+  cb.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:55;font-family:sans-serif";
+  cb.innerHTML = '<div id="cLog" style="display:none;width:260px;max-height:160px;overflow-y:auto;background:rgba(40,20,30,.85);color:#fff;font-size:13px;border-radius:10px;padding:6px;margin-bottom:4px"></div>' +
+    '<div id="cRow" style="display:none;gap:4px"><input id="cIn" maxlength="200" placeholder="Сообщение…" style="width:190px;font-size:16px;border-radius:8px;border:none;padding:6px"><button id="cSend" style="border:none;border-radius:8px;background:#6fa8ff;color:#fff;padding:6px 10px">➤</button></div>' +
+    '<button id="cBtn" style="border:none;border-radius:50%;width:40px;height:40px;background:#6b2d45;color:#fff;font-size:20px">💬</button>';
+  document.body.appendChild(cb);
+  const cLog = cb.querySelector("#cLog"), cRow = cb.querySelector("#cRow"), cIn = cb.querySelector("#cIn"), cBtn = cb.querySelector("#cBtn");
+  let cOpen = false;
+  function renderChat() {
+    cLog.innerHTML = "";
+    for (const m of chatLog.slice(-30)) {
+      const d = document.createElement("div");
+      d.textContent = (m.guest ? "🏃 " : "") + m.name + ": " + m.text;
+      cLog.appendChild(d);
+    }
+    cLog.scrollTop = cLog.scrollHeight;
+  }
+  cBtn.onclick = () => {
+    cOpen = !cOpen;
+    cLog.style.display = cOpen ? "block" : "none";
+    cRow.style.display = cOpen ? "flex" : "none";
+    cBtn.textContent = "💬";
+    if (cOpen) { renderChat(); cIn.focus(); }
+  };
+  function sendChat() {
+    const t = cIn.value.trim();
+    if (!t) return;
+    sendMsg({ type: "chat", text: t });
+    cIn.value = "";
+  }
+  cb.querySelector("#cSend").onclick = sendChat;
+  cIn.onkeydown = (e) => { if (e.key === "Enter") sendChat(); e.stopPropagation(); };
+  cIn.onkeyup = (e) => e.stopPropagation();
+  const prevH16 = handleMessage;
+  handleMessage = function (msg) {
+    if (msg && msg.type === "chat") {
+      chatLog.push(msg);
+      if (cOpen) renderChat(); else { cBtn.textContent = "💬●"; }
+      return;
+    }
+    prevH16(msg);
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
