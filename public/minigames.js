@@ -1535,5 +1535,38 @@
     }
   };
 
+
+  // ---------- Монеты за звёзды Telegram ----------
+  const PK = [["p15", 15, 30], ["p50", 50, 110], ["p100", 100, 240]];
+  const pay = document.createElement("div");
+  pay.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.65);display:none;z-index:40;align-items:center;justify-content:center";
+  pay.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:340px;text-align:center"><b style="font-size:18px">💰 Купить монеты</b><div style="font-size:12px;margin:4px 0 8px">Оплата звёздами Telegram ⭐. Монеты общие для вас обоих.</div><div id="payList"></div><button id="payClose" style="margin-top:8px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
+  document.body.appendChild(pay);
+  const pl = pay.querySelector("#payList");
+  for (const p of PK) {
+    const b = document.createElement("button");
+    b.style.cssText = "display:block;width:100%;margin:6px 0;border:none;border-radius:12px;background:#ffb347;color:#fff;font-size:17px;padding:12px";
+    b.textContent = "🪙 " + p[2] + "  за  " + p[1] + " ⭐";
+    b.onclick = () => sendMsg({ type: "buy_coins", pack: p[0] });
+    pl.appendChild(b);
+  }
+  pay.querySelector("#payClose").onclick = () => { pay.style.display = "none"; };
+  const payBtn = document.createElement("button");
+  payBtn.textContent = "💰 Купить монеты";
+  payBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#ffb347;color:#fff";
+  payBtn.onclick = () => { pay.style.display = "flex"; menu.style.display = "none"; };
+  menu.appendChild(payBtn);
+  const prevH12 = handleMessage;
+  handleMessage = function (msg) {
+    if (msg && msg.type === "invoice") {
+      const tg = window.Telegram && Telegram.WebApp;
+      if (tg && tg.openInvoice) {
+        tg.openInvoice(msg.url, (st) => { if (st === "paid") showToast("Оплата прошла, монеты скоро придут ✨"); else if (st === "failed") showToast("Оплата не прошла 😔"); });
+      } else showToast("Оплата работает только внутри Telegram");
+      return;
+    }
+    prevH12(msg);
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
