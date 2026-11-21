@@ -397,7 +397,7 @@ function tgApi(method, payload, cb) {
 }
 
 // ---------- Покупка монет за звёзды Telegram ----------
-const PACKS = { p15: { stars: 15, coins: 30 }, p50: { stars: 50, coins: 110 }, p100: { stars: 100, coins: 240 } };
+const PACKS = { p15: { stars: 15, coins: 30 }, p50: { stars: 50, coins: 110 }, p100: { stars: 100, coins: 240 }, d15: { stars: 15, coins: 5, donate: true }, d50: { stars: 50, coins: 20, donate: true }, d100: { stars: 100, coins: 50, donate: true } };
 const HOOK_SECRET = crypto.createHash("sha256").update(BOT_TOKEN || "none").digest("hex").slice(0, 32);
 app.post("/tg-webhook", express.json(), (req, res) => {
   res.sendStatus(200);
@@ -423,7 +423,8 @@ app.post("/tg-webhook", express.json(), (req, res) => {
       if (house.payments.some((p) => p.id === sp.telegram_payment_charge_id)) return;
       house.payments.push({ id: sp.telegram_payment_charge_id, pack: parts[2], stars: pack.stars, at: Date.now(), by: parts[1] });
       house.coins += pack.coins;
-      notifyHouse(house, "Спасибо! +" + pack.coins + " 🪙 ❤️");
+      const dAch = pack.donate ? statAdd(house, "donate", 1) : "";
+      notifyHouse(house, (pack.donate ? "Огромное спасибо создателю от всего сердца! 💖 +" : "Спасибо! +") + pack.coins + " 🪙 ❤️" + dAch);
       markDirty(parts[0], true);
       broadcast(parts[0]);
       return;
@@ -524,6 +525,7 @@ const ACH = [
   { id: "str30", n: "Месяц вместе", s: "streak", t: 30, r: 25 },
   { id: "look1", n: "Новый образ", s: "look", t: 1, r: 2 },
   { id: "plan1", n: "Перестроили дом", s: "plan", t: 1, r: 2 },
+  { id: "donor", n: "Меценат: поддержал создателя 💖", s: "donate", t: 1, r: 10 },
   { id: "paint1", n: "Свежий ремонт", s: "paint", t: 1, r: 2 }
 ];
 function statVal(house, s) {
@@ -737,7 +739,7 @@ wss.on("connection", (ws) => {
       if (!CUR || !pk) return;
       if (!BOT_TOKEN) { send(ws, { type: "toast", text: "Оплата пока не настроена" }); return; }
       const wsRef = ws, codeRef = ws.house, roleRef = ws.role, key = msg.pack;
-      tgApi("createInvoiceLink", { title: pk.coins + " монет", description: "Монеты для дома TamoLove", payload: codeRef + ":" + roleRef + ":" + key, provider_token: "", currency: "XTR", prices: [{ label: pk.coins + " монет", amount: pk.stars }] }, (r) => {
+      tgApi("createInvoiceLink", { title: pk.donate ? "Поддержать создателя" : pk.coins + " монет", description: pk.donate ? "Спасибо, что поддерживаешь TamoLove! Бонус: " + pk.coins + " монет" : "Монеты для дома TamoLove", payload: codeRef + ":" + roleRef + ":" + key, provider_token: "", currency: "XTR", prices: [{ label: pk.coins + " монет", amount: pk.stars }] }, (r) => {
         if (r && r.ok && r.result) send(wsRef, { type: "invoice", url: r.result });
         else send(wsRef, { type: "toast", text: "Не получилось создать счёт 😔" });
       });
