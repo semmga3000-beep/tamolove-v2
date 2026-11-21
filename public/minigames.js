@@ -1606,5 +1606,60 @@
     }
   };
 
+
+  // ---------- Друзья ----------
+  let fr = { friends: [], requests: [] };
+  const frBox = document.createElement("div");
+  frBox.style.cssText = "position:fixed;inset:0;background:rgba(60,20,40,.6);display:none;z-index:30;align-items:center;justify-content:center";
+  frBox.innerHTML = '<div style="background:#fff8f0;border:3px solid #6b2d45;border-radius:14px;padding:14px;width:92%;max-width:360px;max-height:85%;overflow:auto;text-align:center;color:#6b2d45"><b style="font-size:18px">👥 Друзья</b><div id="frList"></div><div style="margin-top:10px"><input id="frCode" maxlength="5" placeholder="КОД ДОМА" autocapitalize="characters" autocomplete="off" style="width:60%;font-size:16px;padding:8px;border:2px solid #e0a0b8;border-radius:10px;text-align:center"><button id="frAdd" style="margin-left:6px;border:none;border-radius:10px;background:#ff6f91;color:#fff;font-size:15px;padding:10px 12px">Добавить</button></div><button id="frClose" style="margin-top:10px;border:none;border-radius:12px;background:#b79bd1;color:#fff;font-size:16px;padding:10px 20px">Закрыть</button></div>';
+  document.body.appendChild(frBox);
+  function renderFr() {
+    const box = frBox.querySelector("#frList");
+    box.innerHTML = "";
+    const mk = (txt, btns) => {
+      const d = document.createElement("div");
+      d.style.cssText = "display:flex;align-items:center;gap:6px;margin:7px 0;text-align:left;font-size:14px";
+      const sp = document.createElement("span");
+      sp.style.flex = "1";
+      sp.textContent = txt;
+      d.appendChild(sp);
+      for (const b of btns) {
+        const el = document.createElement("button");
+        el.textContent = b[0];
+        el.style.cssText = "border:none;border-radius:9px;color:#fff;font-size:13px;padding:7px 9px;background:" + b[1];
+        el.onclick = b[2];
+        d.appendChild(el);
+      }
+      box.appendChild(d);
+    };
+    if (fr.requests.length) { const h = document.createElement("div"); h.innerHTML = "<b>Запросы</b>"; h.style.margin = "8px 0 2px"; box.appendChild(h); }
+    for (const q of fr.requests) mk("💌 " + q.label, [["Принять", "#7ed08a", () => sendMsg({ type: "friend_answer", code: q.code, ok: true })], ["Нет", "#c9707a", () => sendMsg({ type: "friend_answer", code: q.code, ok: false })]]);
+    const h2 = document.createElement("div");
+    h2.innerHTML = "<b>Мои друзья</b>" + (fr.friends.length ? "" : "<br><small>Пока никого. Введи код дома друзей ниже.</small>");
+    h2.style.margin = "8px 0 2px";
+    box.appendChild(h2);
+    for (const f of fr.friends) mk((f.online ? "🟢 " : "⚪ ") + f.label + " · " + f.code, [["Убрать", "#c9b0b8", () => sendMsg({ type: "friend_remove", code: f.code })]]);
+  }
+  const frBtn = document.createElement("button");
+  frBtn.textContent = "👥 Друзья";
+  frBtn.style.cssText = "margin:0;font-size:15px;padding:9px 12px;border:none;border-radius:10px;background:#6fa8ff;color:#fff";
+  frBtn.onclick = () => { renderFr(); frBox.style.display = "flex"; menu.style.display = "none"; };
+  menu.appendChild(frBtn);
+  frBox.querySelector("#frClose").onclick = () => { frBox.style.display = "none"; };
+  frBox.querySelector("#frAdd").onclick = () => {
+    const inp = frBox.querySelector("#frCode");
+    const c = inp.value.trim().toUpperCase();
+    if (c) { sendMsg({ type: "friend_add", code: c }); inp.value = ""; }
+  };
+  const prevH14 = handleMessage;
+  handleMessage = function (msg) {
+    prevH14(msg);
+    if (msg && msg.type === "state" && msg.house) {
+      fr = { friends: msg.house.friends || [], requests: msg.house.requests || [] };
+      frBtn.textContent = "👥 Друзья" + (fr.requests.length ? " (" + fr.requests.length + ")" : "");
+      if (frBox.style.display === "flex") renderFr();
+    }
+  };
+
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
 })();
