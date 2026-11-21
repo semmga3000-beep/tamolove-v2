@@ -1727,12 +1727,12 @@
         const list = [];
         for (const rl of ["caregiver", "receiver"]) { const p = st.players && st.players[rl]; if (p) list.push(Object.assign({ id: rl, role: rl }, p)); }
         setNpcs("r_", list);
-        setNpcs("g_", st.guests || [], myGid);
+        setNpcs("g_", H.guests || [], myGid);
       } else if (msg && msg.type === "toast") prevH15(msg);
       return;
     }
     prevH15(msg);
-    if (msg && msg.type === "state" && Array.isArray(msg.guests)) setNpcs("g_", msg.guests);
+    if (msg && msg.type === "state" && msg.house && Array.isArray(msg.house.guests)) setNpcs("g_", msg.house.guests);
   };
 
   window.TLMini = { getGame: () => game, startCook, startScrub, cookStop };
