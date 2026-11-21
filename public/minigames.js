@@ -1550,6 +1550,17 @@
     b.onclick = () => sendMsg({ type: "buy_coins", pack: p[0] });
     pl.appendChild(b);
   }
+  const dh = document.createElement("div");
+  dh.innerHTML = "<b>💖 Поддержать создателя</b><br><small>Спасибо! В подарок немного монет и достижение</small>";
+  dh.style.margin = "12px 0 4px";
+  pl.appendChild(dh);
+  for (const p of [["d15", 15, 5], ["d50", 50, 20], ["d100", 100, 50]]) {
+    const b = document.createElement("button");
+    b.style.cssText = "display:inline-block;margin:3px;border:none;border-radius:12px;background:#ff6f91;color:#fff;font-size:15px;padding:10px 12px";
+    b.textContent = p[1] + " ⭐ (+" + p[2] + " 🪙)";
+    b.onclick = () => sendMsg({ type: "buy_coins", pack: p[0] });
+    pl.appendChild(b);
+  }
   pay.querySelector("#payClose").onclick = () => { pay.style.display = "none"; };
   const payBtn = document.createElement("button");
   payBtn.textContent = "💰 Купить монеты";
